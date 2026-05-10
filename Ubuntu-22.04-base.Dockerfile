@@ -1,7 +1,7 @@
-# Dockerfile (Minimal)
-# Stage 1: Build and customize the rootfs for development (Minimal)
+# Dockerfile (CLI)
+# Stage 1: Build and customize the rootfs for development (Base - Ubuntu 22.04)
 ARG TARGETPLATFORM
-FROM ubuntu:24.04 AS customizer
+FROM ubuntu:22.04 AS customizer
 
 ENV DEBIAN_FRONTEND=noninteractive
 
@@ -17,8 +17,18 @@ COPY scripts/bashrc.sh /etc/profile.d/ds-aliases.sh
 # Make scripts executable
 RUN chmod +x /usr/local/bin/download-firmware /etc/profile.d/ds-aliases.sh
 
-# Install Minimal package set
+# This is the main installation layer. All package installations, PPA additions,
+# and setup are done here to minimize layers and maximize build speed.
 RUN apt-get update && \
+    apt-get install -y --no-install-recommends \
+    # Essentials for adding PPAs
+    software-properties-common \
+    gnupg \
+    # Add PPAs for fastfetch and Firefox ESR
+    && add-apt-repository ppa:zhangsongcui3371/fastfetch -y && \
+    # Update package lists again after adding PPAs
+    apt-get update && \
+    # Install all packages in a single command
     apt-get install -y --no-install-recommends \
     # Core utilities
     bash \
@@ -37,29 +47,83 @@ RUN apt-get update && \
     udev \
     dbus \
     systemd-sysv \
-    # Basic tools
-    git \
+    # Compression tools
+    zip \
+    unzip \
+    p7zip-full \
+    bzip2 \
+    xz-utils \
+    tar \
+    gzip \
+    # System tools
+    htop \
+    vim \
     nano \
+    git \
     sudo \
-    # Networking & SSH
     openssh-server \
     net-tools \
     iptables \
     iputils-ping \
     iproute2 \
     dnsutils \
+    usbutils \
+    pciutils \
+    lsof \
+    psmisc \
+    procps \
+    fastfetch \
+    # Wireless networking tools for hotspot functionality
+    iw \
     # Logging & Rotation
     logrotate \
-    # Procps for system monitoring
-    procps \
+    # C/C++ Development
+    build-essential \
+    gcc \
+    g++ \
+    gdb \
+    make \
+    cmake \
+    autoconf \
+    automake \
+    libtool \
+    pkg-config \
+    # File system tools
+    dosfstools \
+    exfatprogs \
+    btrfs-progs \
+    ntfs-3g \
+    xfsprogs \
+    jfsutils \
+    hfsprogs \
+    reiserfsprogs \
+    cryptsetup \
+    nilfs-tools \
+    udftools \
+    f2fs-tools \
+    # Python Development
+    python3 \
+    python3-pip \
+    python3-dev \
+    python3-venv \
+    python-is-python3 \
+    # Additional dev tools
+    clang \
+    llvm \
+    valgrind \
+    strace \
+    ltrace \
+    # Docker
+    docker.io \
+    docker-compose-v2 \
     && apt-get purge -y gdm3 gnome-session gnome-shell whoopsie && \
     apt-get autoremove -y
 
-# Configure iptables-legacy (MANDATORY for Android compatibility)
+# Configure iptables-legacy (Required for Android compatibility)
 RUN update-alternatives --set iptables /usr/sbin/iptables-legacy && \
     update-alternatives --set ip6tables /usr/sbin/ip6tables-legacy
 
-# Configure locales, environment, SSH, and user setup
+# Configure locales, environment, SSH, Docker, and user setup in a single layer
 RUN locale-gen en_US.UTF-8 && \
     update-locale LANG=en_US.UTF-8 LC_ALL=en_US.UTF-8 && \
     # Set global environment variables
@@ -68,8 +132,8 @@ RUN locale-gen en_US.UTF-8 && \
     mkdir -p /var/run/sshd && \
     sed -i 's/#PermitRootLogin prohibit-password/PermitRootLogin no/' /etc/ssh/sshd_config && \
     sed -i 's/#PasswordAuthentication yes/PasswordAuthentication yes/' /etc/ssh/sshd_config && \
-    # Create default user directories if xdg-user-dirs is present (it's not in minimal, but we'll leave the logic clean)
-    # xdg-user-dirs-update && \
+    # Create default user directories
+    xdg-user-dirs-update && \
     # Remove default ubuntu user if it exists
     deluser --remove-home ubuntu || true
 
@@ -179,9 +243,19 @@ fi
 echo "Post-extraction fixes applied on $(date)" > /etc/droidspaces
 EOF_RUN
 
-# Install QEMU and binfmt (Essential for multi-arch/emulation support if needed)
-RUN apt-get update && \
-    apt-get install -y --no-install-recommends qemu-user-static binfmt-support
+# Purge and reinstall qemu and binfmt in the exact order specified
+RUN apt-get purge -y qemu-* binfmt-support && \
+    apt-get autoremove -y && \
+    apt-get autoclean && \
+    # Remove any leftover config files
+    rm -rf /var/lib/binfmts/* && \
+    rm -rf /etc/binfmt.d/* && \
+    rm -rf /usr/lib/binfmt.d/qemu-* && \
+    # Update package lists
+    apt-get update && \
+    # Install ONLY these packages (in this specific order)
+    apt-get install -y qemu-user-static && \
+    apt-get install -y binfmt-support
 
 # Final cleanup of APT cache
 RUN apt-get clean && \

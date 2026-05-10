@@ -1,7 +1,7 @@
 # Dockerfile (Minimal)
-# Stage 1: Build and customize the rootfs for development (Minimal)
+# Stage 1: Build and customize the rootfs for development (Minimal - Ubuntu 22.04)
 ARG TARGETPLATFORM
-FROM ubuntu:24.04 AS customizer
+FROM ubuntu:22.04 AS customizer
 
 ENV DEBIAN_FRONTEND=noninteractive
 
@@ -68,8 +68,6 @@ RUN locale-gen en_US.UTF-8 && \
     mkdir -p /var/run/sshd && \
     sed -i 's/#PermitRootLogin prohibit-password/PermitRootLogin no/' /etc/ssh/sshd_config && \
     sed -i 's/#PasswordAuthentication yes/PasswordAuthentication yes/' /etc/ssh/sshd_config && \
-    # Create default user directories if xdg-user-dirs is present (it's not in minimal, but we'll leave the logic clean)
-    # xdg-user-dirs-update && \
     # Remove default ubuntu user if it exists
     deluser --remove-home ubuntu || true
 
