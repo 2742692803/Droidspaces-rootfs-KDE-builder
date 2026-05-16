@@ -1,12 +1,13 @@
-# Dockerfile (CLI)
-# Stage 1: Build and customize the rootfs for development (Base - Ubuntu 22.04)
+# Dockerfile (GUI)
+# Stage 1: Build and customize the rootfs for development (GUI - Debian 13)
 ARG TARGETPLATFORM
-FROM ubuntu:22.04 AS customizer
+FROM debian:trixie AS customizer
 
 ENV DEBIAN_FRONTEND=noninteractive
 
-# Update base system
-RUN apt-get update && apt-get upgrade -y
+# Update base system and enable non-free/contrib for hfsprogs
+RUN (sed -i 's/main/main contrib non-free/g' /etc/apt/sources.list 2>/dev/null || sed -i 's/Components: main/Components: main contrib non-free/g' /etc/apt/sources.list.d/debian.sources) && \
+    apt-get update && apt-get upgrade -y
 
 # Copy custom scripts first
 COPY scripts/download-firmware /usr/local/bin/
@@ -17,18 +18,8 @@ COPY scripts/bashrc.sh /etc/profile.d/ds-aliases.sh
 # Make scripts executable
 RUN chmod +x /usr/local/bin/download-firmware /etc/profile.d/ds-aliases.sh
 
-# This is the main installation layer. All package installations, PPA additions,
-# and setup are done here to minimize layers and maximize build speed.
+# Main installation layer for everything (Minimal + CLI + GUI)
 RUN apt-get update && \
-    apt-get install -y --no-install-recommends \
-    # Essentials for adding PPAs
-    software-properties-common \
-    gnupg \
-    # Add PPAs for fastfetch and Firefox ESR
-    && add-apt-repository ppa:zhangsongcui3371/fastfetch -y && \
-    # Update package lists again after adding PPAs
-    apt-get update && \
-    # Install all packages in a single command
     apt-get install -y --no-install-recommends \
     # Core utilities
     bash \
@@ -47,6 +38,7 @@ RUN apt-get update && \
     udev \
     dbus \
     systemd-sysv \
+    systemd-resolved \
     # Compression tools
     zip \
     unzip \
@@ -57,6 +49,7 @@ RUN apt-get update && \
     gzip \
     # System tools
     htop \
+    btop \
     vim \
     nano \
     git \
@@ -74,11 +67,11 @@ RUN apt-get update && \
     procps \
     fastfetch \
     kmod \
-    # Wireless networking tools for hotspot functionality
+    # Wireless networking tools
     iw \
     # Logging & Rotation
     logrotate \
-    # C/C++ Development
+    # Development tools
     build-essential \
     gcc \
     g++ \
@@ -89,7 +82,20 @@ RUN apt-get update && \
     automake \
     libtool \
     pkg-config \
+    # Additional dev tools
+    clang \
+    llvm \
+    valgrind \
+    strace \
+    ltrace \
+    # Python Development
+    python3 \
+    python3-pip \
+    python3-dev \
+    python3-venv \
+    python-is-python3 \
     # File system tools
+    gparted \
     dosfstools \
     exfatprogs \
     btrfs-progs \
@@ -102,23 +108,71 @@ RUN apt-get update && \
     nilfs-tools \
     udftools \
     f2fs-tools \
-    # Python Development
-    python3 \
-    python3-pip \
-    python3-dev \
-    python3-venv \
-    python-is-python3 \
-    # Additional dev tools
-    clang \
-    llvm \
-    valgrind \
-    strace \
-    ltrace \
+    # XFCE Desktop Environment and essential tools
+    xfce4 \
+    desktop-base \
+    xfce4-terminal \
+    xfce4-session \
+    xfce4-goodies \
+    xfce4-taskmanager \
+    mousepad \
+    galculator \
+    nemo-fileroller \
+    ristretto \
+    xfce4-screenshooter \
+    catfish \
+    xcursor-themes \
+    xfce4-clipman-plugin \
+    xinit \
+    xorg \
+    dbus-x11 \
+    at-spi2-core \
+    tumbler \
+    # Icon themes
+    adwaita-icon-theme-full \
+    hicolor-icon-theme \
+    gnome-icon-theme \
+    tango-icon-theme \
+    # GTK theme engines and popular themes
+    gtk2-engines-murrine \
+    gtk2-engines-pixbuf \
+    arc-theme \
+    numix-gtk-theme \
+    papirus-icon-theme \
+    greybird-gtk-theme \
+    # Essential fonts for GUI rendering
+    fonts-dejavu-core \
+    fonts-liberation \
+    fonts-liberation2 \
+    fonts-noto-core \
+    fonts-noto-ui-core \
+    # File manager and GUI utilities
+    thunar \
+    thunar-volman \
+    thunar-archive-plugin \
+    thunar-media-tags-plugin \
+    gvfs \
+    gvfs-backends \
+    gvfs-fuse \
+    x11-xserver-utils \
+    x11-utils \
+    xclip \
+    xsel \
+    xfwm4 \
+    xfconf \
+    zenity \
+    notification-daemon \
+    # Browser (Firefox ESR)
+    firefox-esr \
+    # User directory management
+    xdg-user-dirs \
+    # PolicyKit for permissions
+    polkitd \
+    mate-polkit \
     # Docker
     docker.io \
-    docker-compose-v2 \
-    && apt-get purge -y gdm3 gnome-session gnome-shell whoopsie && \
-    apt-get autoremove -y && \
+    docker-compose \
+    && apt-get autoremove -y && \
     apt-get clean && \
     rm -rf /var/lib/apt/lists/*
 
@@ -126,7 +180,7 @@ RUN apt-get update && \
 RUN update-alternatives --set iptables /usr/sbin/iptables-legacy && \
     update-alternatives --set ip6tables /usr/sbin/ip6tables-legacy
 
-# Configure locales, environment, SSH, Docker, and user setup in a single layer
+# Configure locales, environment, SSH, and user setup
 RUN sed -i '/en_US.UTF-8/s/^# //' /etc/locale.gen && \
     locale-gen && \
     update-locale LANG=en_US.UTF-8 LC_ALL=en_US.UTF-8 && \
@@ -136,10 +190,10 @@ RUN sed -i '/en_US.UTF-8/s/^# //' /etc/locale.gen && \
     mkdir -p /var/run/sshd && \
     sed -i 's/#PermitRootLogin prohibit-password/PermitRootLogin no/' /etc/ssh/sshd_config && \
     sed -i 's/#PasswordAuthentication yes/PasswordAuthentication yes/' /etc/ssh/sshd_config && \
-    # Create default user directories
+    # Initialize default user directories for GUI apps
     xdg-user-dirs-update && \
-    # Remove default ubuntu user if it exists
-    deluser --remove-home ubuntu || true
+    # Remove default user if it exists
+    deluser --remove-home debian || true
 
 # Fix DHCP in the container
 RUN mkdir -p /etc/systemd/network && \
@@ -159,6 +213,7 @@ EOF
 
 # Apply Android compatibility fixes (Systemd and Udev)
 RUN <<EOF_RUN
+
 # --- 1. General Fixes ---
 # Android network group setup (required for socket access on Android kernels)
 grep -q '^aid_inet:' /etc/group    || echo 'aid_inet:x:3003:'    >> /etc/group
@@ -247,6 +302,35 @@ fi
 echo "Post-extraction fixes applied on $(date)" > /etc/droidspaces
 EOF_RUN
 
+# Update icon and font caches in a final setup layer
+RUN gtk-update-icon-cache -f /usr/share/icons/hicolor 2>/dev/null || true && \
+    gtk-update-icon-cache -f /usr/share/icons/Adwaita 2>/dev/null || true && \
+    gtk-update-icon-cache -f /usr/share/icons/Papirus 2>/dev/null || true && \
+    gtk-update-icon-cache -f /usr/share/icons/Tango 2>/dev/null || true && \
+    fc-cache -fv
+
+# Fix xfwm4 vblank_mode for Turnip (Qualcomm GPU) - prevents XFCE compositor hang
+# The sed fix 's/vblank_mode=auto/vblank_mode=off/' does NOT work on the XML format
+# (the file uses value="auto" as an XML attribute, not a bare key=value pair).
+# Instead we pre-place the complete xfwm4.xml with the correct value already set.
+# xfconf will not regenerate the file if it already exists, so this is reliable.
+#
+# Coverage:
+#   /etc/skel  → copied verbatim into every new user's $HOME by adduser
+#   /root      → root's home is never seeded from /etc/skel, so patch it directly
+#   /usr/share/xfwm4/defaults → xfwm4's key=value seed file, read before xfconf
+COPY scripts/xfwm4.xml /etc/skel/.config/xfce4/xfconf/xfce-perchannel-xml/xfwm4.xml
+COPY scripts/xfwm4.xml /root/.config/xfce4/xfconf/xfce-perchannel-xml/xfwm4.xml
+
+# /usr/share/xfwm4/defaults - key=value seed file xfwm4 reads before xfconf
+RUN if [ -f /usr/share/xfwm4/defaults ]; then \
+    if grep -q '^vblank_mode=' /usr/share/xfwm4/defaults; then \
+        sed -i 's/^vblank_mode=.*/vblank_mode=off/' /usr/share/xfwm4/defaults; \
+    else \
+        echo 'vblank_mode=off' >> /usr/share/xfwm4/defaults; \
+    fi; \
+fi
+
 # Purge and reinstall qemu and binfmt in the exact order specified
 RUN apt-get purge -y qemu-* binfmt-support || true && \
     apt-get autoremove -y && \
@@ -260,6 +344,7 @@ RUN apt-get purge -y qemu-* binfmt-support || true && \
     # Install ONLY these packages (in this specific order)
     apt-get install -y qemu-user-static && \
     apt-get install -y binfmt-support
+
 
 # Final cleanup of APT cache
 RUN apt-get clean && \
