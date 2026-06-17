@@ -57,7 +57,7 @@ RUN apt-get update && \
             greybird-gtk-theme fonts-dejavu-core fonts-liberation fonts-liberation2 fonts-noto-core fonts-noto-ui-core \
             fonts-ubuntu thunar thunar-volman thunar-archive-plugin thunar-media-tags-plugin gvfs gvfs-backends gvfs-fuse \
             x11-xserver-utils x11-utils xclip xsel xfwm4 xfconf zenity notification-daemon xdg-user-dirs \
-            onts-droid-fallback ttf-wqy-zenhei fonts-arphic-ukai fonts-arphic-uming; \
+            fonts-droid-fallback ttf-wqy-zenhei fonts-arphic-ukai fonts-arphic-uming; \
     fi && \
     ######################################################################################################
     #输入法 fcitx5 (可选)
