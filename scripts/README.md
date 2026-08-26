@@ -10,7 +10,7 @@
 | --- | --- | --- |
 | `install-desktop.sh`、`desktops/*.sh` | RootFS 构建环境 | 按稳定 slug 分发桌面 profile，并维护各发行版的软件包集合。 |
 | `configure-desktop.sh` | RootFS 构建环境 | 写入桌面/显示后端配置并按需安装统一自启动服务。 |
-| `start-desktop-session.sh` | Linux 容器 | 根据 `/etc/droidspaces/desktop.conf` 启动实际桌面会话。 |
+| `start-desktop-session.sh` | Linux 容器 | 根据 `/etc/droidspaces-desktop.conf` 启动实际桌面会话。 |
 | `install-mesa.sh` | ARM64 Linux 容器 | 安装最新版 Android 容器专用 Mesa 和 MediaCodec VA-API 驱动，并锁定 Mesa 包。 |
 | `install-anland-kde.sh` | ARM64 Linux 容器 | 安装 Anland patched KWin/Xwayland Release 包，并锁定相关包。 |
 | `install-usb-manager.sh` | Linux 容器 | 安装 Droidspaces USB Manager、发行版依赖、菜单入口和用户权限。 |
@@ -97,7 +97,7 @@ RootFS 导入 Droidspaces 时必须开启硬件访问，否则容器无法看到
 
 ## systemd 257 兼容脚本
 
-`systemd257.sh` 供 Dockerfile 在 `enable_systemd257=true` 时调用。它检查已安装的 systemd 主版本：257 或更低版本直接跳过，更高版本则从 `Goldzxcbug/droidspaces-package` 的 `systemd257-packages` Release 安装对应发行版的完整原生包族，并锁定 systemd 相关包。
+`systemd257.sh` 供 Dockerfile 在 `enable_systemd257=true` 时调用。它检查已安装的 systemd 主版本：257 或更低版本直接跳过，更高版本则从 `Goldzxcbug/droidspaces-package` 的冻结兼容 Release `systemd257-packages` 安装对应发行版的完整原生包族，并锁定 systemd 相关包。新包先发布到包含源码版本和仓库提交的不可变标签；RootFS 只有在该 Release 完整发布后，才会一次性更新标签、各平台 SHA-256、预期包数和包仓库提交。
 
 ```bash
 sudo ./scripts/systemd257.sh

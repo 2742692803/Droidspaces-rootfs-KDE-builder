@@ -108,7 +108,7 @@ GitHub Actions 的主要输入项如下：
 开启 `enable_systemd257` 后，RootFS 会运行 `scripts/systemd257.sh`。脚本会先检测发行版现有的 systemd 主版本：
 
 - 257 或更低版本（例如 Debian 13、Ubuntu 24.04）直接跳过；
-- 高于 257 的 apt、dnf 和 pacman 系统从 `droidspaces-package` 的 `systemd257-packages` Release 安装对应发行版的完整 systemd 257 包族；
+- 高于 257 的 apt、dnf 和 pacman 系统从 `droidspaces-package` 的冻结兼容 Release `systemd257-packages` 安装对应发行版的完整 systemd 257 包族；后续包族先发布到不可变标签，再由 RootFS 一次性更新标签与校验元数据；
 - 安装由发行版包管理器完成，并锁定 systemd 相关软件包，防止后续升级覆盖兼容版本。
 
 该选项主要面向旧 Android 内核，属于实验性兼容方案，会显著增加构建时间；建议先在目标内核上验证桌面、dbus、udev 和网络功能。
@@ -144,7 +144,7 @@ Release 通常包含：
 
 ## 启动桌面
 
-启用 `desktop_autostart` 后，构建流程安装统一的 `desktop-session.service`；服务读取 `/etc/droidspaces/desktop.conf` 决定实际会话：
+启用 `desktop_autostart` 后，构建流程安装统一的 `desktop-session.service`；服务读取 `/etc/droidspaces-desktop.conf` 决定实际会话：
 
 | 桌面模式 | 服务文件 | 启动命令 |
 | --- | --- | --- |

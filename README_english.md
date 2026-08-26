@@ -107,7 +107,7 @@ Audio mode details:
 When `enable_systemd257` is enabled, the build runs `scripts/systemd257.sh`. The script first detects the installed systemd major version:
 
 - systemd 257 or older (for example Debian 13 and Ubuntu 24.04) is skipped;
-- apt, dnf, and pacman systems above 257 install their complete systemd 257 package family from the `systemd257-packages` Release in `droidspaces-package`;
+- apt, dnf, and pacman systems above 257 install their complete systemd 257 package family from the frozen compatibility Release `systemd257-packages` in `droidspaces-package`; later package sets are published under immutable tags before the RootFS updates its tag and pinned verification metadata together;
 - installation is handled by the native package manager, and systemd-related packages are locked so a later upgrade does not overwrite the compatibility version.
 
 This option targets old Android kernels and is experimental. It adds substantial build time; test the desktop, dbus, udev, and networking behavior on the target kernel before distributing the image.
@@ -143,7 +143,7 @@ The Release usually contains:
 
 ## Start Desktop
 
-When `desktop_autostart` is enabled, the build installs `desktop-session.service`. It reads `/etc/droidspaces/desktop.conf` to choose the session:
+When `desktop_autostart` is enabled, the build installs `desktop-session.service`. It reads `/etc/droidspaces-desktop.conf` to choose the session:
 
 | Desktop mode | Service file | Start command |
 | --- | --- | --- |

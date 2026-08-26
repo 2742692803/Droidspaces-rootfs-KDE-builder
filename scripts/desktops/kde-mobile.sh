@@ -79,6 +79,6 @@ install_arch() {
 case "$ID" in
     debian|ubuntu) install_apt ;;
     fedora) install_fedora ;;
-    arch) install_arch ;;
+    arch|archarm|archlinux) install_arch ;;
     *) echo "Unsupported distribution for KDE mobile: $ID" >&2; exit 1 ;;
 esac

@@ -10,7 +10,7 @@ This directory contains installers used while building the RootFS, maintenance t
 | --- | --- | --- |
 | `install-desktop.sh`, `desktops/*.sh` | RootFS build environment | Dispatches stable desktop profile slugs and owns per-distribution package sets. |
 | `configure-desktop.sh` | RootFS build environment | Writes desktop/backend configuration and optionally installs the common auto-start service. |
-| `start-desktop-session.sh` | Linux container | Starts the selected session from `/etc/droidspaces/desktop.conf`. |
+| `start-desktop-session.sh` | Linux container | Starts the selected session from `/etc/droidspaces-desktop.conf`. |
 | `install-mesa.sh` | ARM64 Linux container | Installs the latest Android-container Mesa build and MediaCodec VA-API driver, then locks Mesa packages. |
 | `install-anland-kde.sh` | ARM64 Linux container | Installs Anland patched KWin/Xwayland Release packages and locks them. |
 | `install-usb-manager.sh` | Linux container | Installs Droidspaces USB Manager, distribution dependencies, launchers, and user permissions. |
@@ -97,7 +97,7 @@ Hardware access must be enabled when importing the RootFS into Droidspaces, or `
 
 ## systemd 257 Compatibility Script
 
-Dockerfiles call `systemd257.sh` when `enable_systemd257=true`. It checks the installed systemd major version: version 257 and older are skipped, while newer systems install their complete native package family from the `systemd257-packages` Release in `Goldzxcbug/droidspaces-package`. Related systemd packages are then locked.
+Dockerfiles call `systemd257.sh` when `enable_systemd257=true`. It checks the installed systemd major version: version 257 and older are skipped, while newer systems install their complete native package family from the frozen compatibility Release `systemd257-packages` in `Goldzxcbug/droidspaces-package`. Related systemd packages are then locked. New package sets are first published under an immutable tag containing the source version and repository commit; the RootFS updates the tag, per-platform SHA-256 values, expected package counts, and package-repository commit together only after that Release is complete.
 
 ```bash
 sudo ./scripts/systemd257.sh
