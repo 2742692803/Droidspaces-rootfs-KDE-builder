@@ -7,7 +7,7 @@ export DEBIAN_FRONTEND=noninteractive
 
 readonly SYSTEMD257_TARGET_MAJOR=257
 readonly SYSTEMD257_STATE="/etc/droidspaces-systemd257"
-readonly DEFAULT_RELEASE_REPOSITORY="Goldzxcbug/systemd257"
+readonly DEFAULT_RELEASE_REPOSITORY="Goldzxcbug/droidspaces-package"
 readonly DEFAULT_RELEASE_TAG="systemd257-packages"
 readonly PACKAGE_REPOSITORY_COMMIT="0c7d16a3d63143cfa6a8a95e7ad502bb3e39200b"
 readonly MAX_ARCHIVE_BYTES=$((128 * 1024 * 1024))

@@ -2,22 +2,23 @@
 
 # scripts 目录说明
 
-本目录存放 RootFS 构建期间使用的安装器、写入 RootFS 的维护工具、Termux/Android 宿主侧启动脚本，以及 systemd 服务模板。多数文件由 Dockerfile 或 GitHub Actions 调用；运行前请先确认脚本应在 Linux 容器、构建环境还是 Android/Termux 宿主中执行。
+本目录存放 RootFS 构建期间使用的安装器、写入 RootFS 的维护工具以及 systemd 服务模板。多数文件由 Dockerfile 或 GitHub Actions 调用；运行前请先确认脚本应在 Linux 容器还是构建环境中执行。
 
 ## 文件一览
 
 | 文件 | 运行位置 | 作用 |
 | --- | --- | --- |
-| `install-mesa.sh` | ARM64 Linux 容器 | 安装最新版 Android 容器专用 Mesa 和 MediaCodec VA-API 驱动，并锁定 Mesa、KWin 和 Xwayland 包。 |
+| `install-desktop.sh`、`desktops/*.sh` | RootFS 构建环境 | 按稳定 slug 分发桌面 profile，并维护各发行版的软件包集合。 |
+| `configure-desktop.sh` | RootFS 构建环境 | 写入桌面/显示后端配置并按需安装统一自启动服务。 |
+| `start-desktop-session.sh` | Linux 容器 | 根据 `/etc/droidspaces/desktop.conf` 启动实际桌面会话。 |
+| `install-mesa.sh` | ARM64 Linux 容器 | 安装最新版 Android 容器专用 Mesa 和 MediaCodec VA-API 驱动，并锁定 Mesa 包。 |
 | `install-anland-kde.sh` | ARM64 Linux 容器 | 安装 Anland patched KWin/Xwayland Release 包，并锁定相关包。 |
 | `install-usb-manager.sh` | Linux 容器 | 安装 Droidspaces USB Manager、发行版依赖、菜单入口和用户权限。 |
-| `systemd257.sh` | RootFS 构建环境 | 在需要时构建 systemd 257 兼容运行时，供旧 Android 内核使用。 |
+| `systemd257.sh` | RootFS 构建环境 | 在需要时安装由包管理器管控的 systemd 257 完整包族，供旧 Android 内核使用。 |
 | `download-firmware` | Debian/Ubuntu 容器 | 安装并解压 `linux-firmware` 中的 `.zst` 固件。 |
 | `nosnap.sh` | Ubuntu RootFS 构建环境 | 移除 Snap、阻止其重新安装，并配置传统 deb 软件源。 |
-| `on_aaudio_socket.sh` | 已 root 的 Android/Termux | 通过 Unix socket 启动 PulseAudio、Termux:X11 和容器 KDE。 |
-| `on_aaudio_tcp.sh` | 已 root 的 Android/Termux | 通过 TCP 启动 PulseAudio、Termux:X11 和容器 KDE。 |
 | `bashrc.sh` | Linux 用户 shell | 提供 Docker 快捷命令、温度查看和 SSH 文件传输等辅助函数。 |
-| `start/*.service` | Linux 容器的 systemd | 分别自动启动 Plasma X11、Plasma Wayland 和 Plasma Mobile。 |
+| `start/desktop-session.service` | Linux 容器的 systemd | 通过统一入口自动启动所选桌面会话。 |
 | `binfmt/*` | Linux 容器的 systemd/内核 | 检查并挂载 `binfmt_misc`，为 QEMU 跨架构执行做准备。 |
 
 ## Mesa 安装器
@@ -50,11 +51,22 @@ sudo ./scripts/install-mesa.sh --3  # ghproxy.net
 | Fedora | `/etc/dnf/dnf.conf` 中脚本管理的 `exclude` 块 |
 | Arch | `/etc/pacman.conf` 中脚本管理的 `IgnorePkg` 块 |
 
-锁定范围根据归档中实际安装的 Mesa 包生成，并加入 KWin 与 Xwayland。托管配置可重复运行，不会不断追加相同块；已有的非托管配置会保留。
+锁定范围仅根据归档中实际安装的 Mesa 包生成。KWin 与 Xwayland 只由 `install-anland-kde.sh` 锁定。托管配置可重复运行，不会不断追加相同块；已有的非托管配置会保留。
+
+## 新增桌面 profile
+
+桌面名称、发行版能力和显示后端矩阵集中在 `lib/desktop-config.sh`。新增桌面时：
+
+1. 在 `desktop_normalize`、`desktop_label` 和支持矩阵中登记稳定 slug。
+2. 新建可执行的 `desktops/<slug>.sh`，在其中按 `/etc/os-release` 安装各发行版软件包。
+3. 在 `start-desktop-session.sh` 添加会话命令；`install-desktop.sh` 会自动发现合法 slug 对应的可执行 profile。
+4. 在中英文工作流入口的 `desktop` 下拉中加入显示名称。
+
+七个 Dockerfile 和核心工作流已经使用通用 profile 接口，普通 X11 桌面无需复制 Dockerfile。只有确实依赖 patched KWin/Xwayland 的 profile 才应在 `desktop_uses_anland_kde_packages` 中登记。
 
 ## Anland KDE 安装器
 
-`install-anland-kde.sh` 从本仓库固定滚动 Release `anland-kde-packages` 读取 `anland-kde-manifest`，为 Debian 13、Ubuntu 26.04、Fedora 43/44 或 Arch Linux ARM64 安装匹配版本的 patched KWin/Xwayland 包。
+`install-anland-kde.sh` 默认从 `Goldzxcbug/droidspaces-package` 的固定滚动 Release `anland-kde-packages` 读取 `anland-kde-manifest`，为 Debian 13、Ubuntu 26.04、Fedora 43/44 或 Arch Linux ARM64 安装匹配版本的 patched KWin/Xwayland 包。
 
 ```bash
 sudo ./scripts/install-anland-kde.sh
@@ -62,11 +74,10 @@ sudo ./scripts/install-anland-kde.sh
 
 它同样支持 `--1`、`--2`、`--3` 选择 GitHub、`gh-proxy.com` 或 `ghproxy.net`；省略时测速后交互选择。镜像下载的清单与归档均使用 GitHub API digest 校验。脚本按系统 locale 输出中文或英文，并通过 APT hold、DNF exclude 或 Pacman `IgnorePkg` 防止系统更新覆盖安装结果。
 
-安装 fork 发布的包时可以覆盖仓库和 Release tag：
+安装公开 Fork 发布的包时只需覆盖仓库；Fork 必须提供固定标签 `anland-kde-packages`：
 
 ```bash
 sudo ANLAND_KDE_RELEASE_REPOSITORY=owner/repository \
-  ANLAND_KDE_RELEASE_TAG=release-tag \
   ./scripts/install-anland-kde.sh --1
 ```
 
@@ -86,13 +97,13 @@ RootFS 导入 Droidspaces 时必须开启硬件访问，否则容器无法看到
 
 ## systemd 257 兼容脚本
 
-`systemd257.sh` 供 Dockerfile 在 `enable_systemd257=true` 时调用。它检查已安装的 systemd 主版本：257 或更低版本直接跳过，更高版本则从官方 `v257-stable` 构建兼容运行时。构建完成后清理依赖并锁定 systemd 相关包。
+`systemd257.sh` 供 Dockerfile 在 `enable_systemd257=true` 时调用。它检查已安装的 systemd 主版本：257 或更低版本直接跳过，更高版本则从 `Goldzxcbug/droidspaces-package` 的 `systemd257-packages` Release 安装对应发行版的完整原生包族，并锁定 systemd 相关包。
 
 ```bash
 sudo ./scripts/systemd257.sh
 ```
 
-这是面向旧 Android 内核的实验性构建步骤，耗时较长。生成 RootFS 后应实际验证 systemd、D-Bus、udev、网络和桌面会话。
+这是面向旧 Android 内核的实验性兼容步骤。生成 RootFS 后应实际验证 systemd、D-Bus、udev、网络和桌面会话。
 
 ## 固件工具
 
@@ -107,8 +118,7 @@ sudo download-firmware
 ## 其他构建和启动文件
 
 - `nosnap.sh` 仅用于 Ubuntu。它停止并卸载 Snap、清理残留、写入 APT pin 防止重新安装，并配置项目所需的传统 deb 来源。它会修改系统软件包和 APT 配置，应在目标 RootFS 或构建层中以 root 运行。
-- `on_aaudio_socket.sh` 和 `on_aaudio_tcp.sh` 在 Android/Termux 宿主运行，不是在 Linux 容器内运行。使用前修改文件顶部的 `CONTAINER_NAME`、`USERNAME`、`DISPLAY_NUMBER` 和 `DPI`，并准备 root、PulseAudio/AAudio 与 Termux:X11。
-- `start/plasma-x11.service`、`start/plasma-wayland.service` 和 `start/plasma-mobile.service` 是构建时安装的服务模板，以 RootFS 的 UID 1000 用户启动对应桌面，并对异常退出进行限频重启。
+- `start/desktop-session.service` 是通用服务模板，通过 `start-desktop-session.sh` 读取桌面配置，以 RootFS 的 UID 1000 用户启动对应会话，并对异常退出进行限频重启。
 - `binfmt/qemu-binfmt-register.sh` 与对应 service 检查内核是否支持 `binfmt_misc`，必要时挂载它；不支持时安全跳过。实际跨架构执行仍需要 QEMU 解释器。
 - `bashrc.sh` 是追加到用户 shell 环境的辅助配置，不应作为独立安装器执行。
 

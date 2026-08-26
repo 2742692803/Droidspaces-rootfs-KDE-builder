@@ -1,21 +1,25 @@
 #!/bin/bash
+REPO_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+source "$REPO_DIR/scripts/lib/desktop-config.sh"
+
 : "${VERSION:=dev}"
 TARGET_ARCH="aarch64"     # 产物命名使用的目标架构
 PLATFORM="linux/arm64"    # Docker buildx 的平台参数
 
 ENABLE_binfmt="false"
-BUILD_KDE_plus="false"
+DESKTOP_AUTOSTART="false"
 ENABLE_nosnap="false"
 ENABLE_8gen2_wayland="false"
 ENABLE_systemd257="false"
-ENABLE_anland_kde="false"
+DISPLAY_BACKEND_INPUT="X11"
 # 解析输入参数 (-i 指定 Dockerfile，-v 指定版本号)
-while getopts "i:v:K:L:P:a:b:c:d:e:f:g:h:j:n:S:t:u:A:" opt; do
+while getopts "i:v:K:L:B:P:a:b:c:d:e:f:g:h:j:n:S:t:u:A:" opt; do
   case $opt in
     i) DOCKERFILE="$OPTARG" ;; 
     v) VERSION="$OPTARG" ;;    
-    K) BUILD_KDE="$OPTARG"  ;;
-    L) BUILD_KDE_plus="$OPTARG"  ;;
+    K) DESKTOP_INPUT="$OPTARG"  ;;
+    L) DESKTOP_AUTOSTART="$OPTARG"  ;;
+    B) DISPLAY_BACKEND_INPUT="$OPTARG" ;;
     P) PulseAudio="$OPTARG"  ;;
     g) ENABLE_zh_tz="$OPTARG"  ;; 
     a) ENABLE_binfmt="$OPTARG" ;; 
@@ -30,20 +34,43 @@ while getopts "i:v:K:L:P:a:b:c:d:e:f:g:h:j:n:S:t:u:A:" opt; do
     S) ENABLE_systemd257="$OPTARG" ;; # systemd 257 旧内核兼容
     t) ENABLE_8gen2_wayland="$OPTARG" ;; # 修复骁龙8 Gen 2 Wayland 花屏
     u) USERNAME="$OPTARG" ;; 
-    A) ENABLE_anland_kde="$OPTARG" ;; # anland_kde 支持
-    *) echo "用法: $0 -i <template.Dockerfile> [-v <version>] [-S <true|false>]" ; exit 1 ;;
+    A) LEGACY_ANLAND_INPUT="$OPTARG" ;; # 兼容旧参数
+    *) echo "用法: $0 -i <template.Dockerfile> -K <none|KDE|'KDE mobile'> [-B <x11|anland-wayland>]" ; exit 1 ;;
   esac
 done
 
 : "${USERNAME:=Gold}"
-: "${ANLAND_KDE_RELEASE_REPOSITORY:=Goldzxcbug/Droidspaces-rootfs-KDE-builder}"
+: "${ANLAND_KDE_RELEASE_REPOSITORY:=Goldzxcbug/droidspaces-package}"
 : "${ANLAND_KDE_RELEASE_TAG:=}"
 : "${ANLAND_KDE_PACKAGE_REVISION:=}"
 ANLAND_KDE_ROLLING_RELEASE_TAG="anland-kde-packages"
 
-if [ "${BUILD_KDE:-}" = "mobile" ]; then
-  ENABLE_anland_kde="true"
+if ! DESKTOP="$(desktop_normalize "${DESKTOP_INPUT:-}")"; then
+  echo "错误：-K 只支持 none、KDE 或 'KDE mobile'。" >&2
+  exit 1
+fi
+if [[ -n "${LEGACY_ANLAND_INPUT:-}" ]]; then
+  case "$LEGACY_ANLAND_INPUT" in
+    true) DISPLAY_BACKEND_INPUT="anland-wayland" ;;
+    false) DISPLAY_BACKEND_INPUT="x11" ;;
+    *) echo "错误：旧参数 -A 只支持 true 或 false。" >&2; exit 1 ;;
+  esac
+fi
+if ! DISPLAY_BACKEND="$(display_backend_normalize "$DISPLAY_BACKEND_INPUT")"; then
+  echo "错误：-B 只支持 x11 或 anland-wayland。" >&2
+  exit 1
+fi
+case "$DESKTOP_AUTOSTART" in true|false) ;; *) echo "错误：-L 只支持 true 或 false。" >&2; exit 1 ;; esac
+
+if [[ "$DESKTOP" == kde-mobile ]]; then
+  DISPLAY_BACKEND="anland-wayland"
+fi
+if [[ "$DISPLAY_BACKEND" == anland-wayland ]]; then
   PulseAudio="none"
+fi
+INSTALL_ANLAND_KDE_PACKAGES="false"
+if [[ "$DISPLAY_BACKEND" == anland-wayland ]] && desktop_uses_anland_kde_packages "$DESKTOP"; then
+  INSTALL_ANLAND_KDE_PACKAGES="true"
 fi
 
 resolve_anland_kde_release_tag() {
@@ -72,8 +99,21 @@ if [ ! -f "$DOCKERFILE" ]; then
     exit 1
 fi
 
-# 提取前缀名称
-PREFIX=$(echo "$DOCKERFILE" | sed 's/\.Dockerfile//')
+# 提取发行版目标名称
+PREFIX="$(basename "${DOCKERFILE%.Dockerfile}")"
+
+if ! desktop_target_supported "$PREFIX" "$DESKTOP"; then
+  echo "错误：$PREFIX 不支持桌面 $DESKTOP。" >&2
+  exit 1
+fi
+if ! desktop_backend_supported "$PREFIX" "$DESKTOP" "$DISPLAY_BACKEND"; then
+  echo "错误：$PREFIX 不支持 $DESKTOP/$DISPLAY_BACKEND 组合。" >&2
+  exit 1
+fi
+if [[ "$DESKTOP" == none && "$DESKTOP_AUTOSTART" == true ]]; then
+  echo "错误：桌面为 none 时不能启用桌面自启动。" >&2
+  exit 1
+fi
 
 echo "========================================================="
 echo " 开始构建项目 : $PREFIX"
@@ -85,9 +125,12 @@ echo " 容器识别部分硬件和网络：$ENABLE_yj"
 echo " Ubuntu nosnap：$ENABLE_nosnap"
 echo " systemd 257 旧内核兼容：$ENABLE_systemd257"
 echo " 修复骁龙8 Gen 2 Wayland 花屏：$ENABLE_8gen2_wayland"
+echo " 桌面：$DESKTOP"
+echo " 显示后端：$DISPLAY_BACKEND"
+echo " 桌面自启动：$DESKTOP_AUTOSTART"
 echo "========================================================="
 
-if [ "$ENABLE_anland_kde" = "true" ]; then
+if [ "$INSTALL_ANLAND_KDE_PACKAGES" = "true" ]; then
   if ! resolve_anland_kde_release_tag; then
     exit 1
   fi
@@ -141,15 +184,13 @@ docker buildx inspect --bootstrap || echo "警告: 引导失败，尝试继续�
 set -e
 
 # 3. 核心构建流程
-TEMP_TAR="custom-${PREFIX}-rootfs.tar"
-if [ "$BUILD_KDE" = "mobile" ]; then
-  DISPLAY_BACKEND="Mobile"
-elif [ "$ENABLE_anland_kde" = "true" ]; then
-  DISPLAY_BACKEND="Wayland"
+TEMP_TAR="custom-${PREFIX}-${DESKTOP}-rootfs.tar"
+if [ "$DESKTOP" = "none" ]; then
+  DISPLAY_LABEL="CLI"
 else
-  DISPLAY_BACKEND="X11"
+  DISPLAY_LABEL="$(display_backend_label "$DISPLAY_BACKEND")"
 fi
-FINAL_NAME="${PREFIX}-${DISPLAY_BACKEND}-Droidspaces-rootfs-${TARGET_ARCH}-${VERSION}.tar.xz"
+FINAL_NAME="${PREFIX}-${DESKTOP}-${DISPLAY_LABEL}-Droidspaces-rootfs-${TARGET_ARCH}-${VERSION}.tar.xz"
 
 echo "正在运行 Docker Buildx ($PLATFORM 跨架构模式)..."
 
@@ -157,8 +198,10 @@ docker buildx build \
   --platform "$PLATFORM" \
   --target export \
   --output type=tar,dest="$TEMP_TAR" \
-  --build-arg BUILD_KDE="$BUILD_KDE" \
-  --build-arg BUILD_KDE_plus="$BUILD_KDE_plus" \
+  --build-arg DESKTOP="$DESKTOP" \
+  --build-arg DESKTOP_AUTOSTART="$DESKTOP_AUTOSTART" \
+  --build-arg DISPLAY_BACKEND="$DISPLAY_BACKEND" \
+  --build-arg INSTALL_ANLAND_KDE_PACKAGES="$INSTALL_ANLAND_KDE_PACKAGES" \
   --build-arg PulseAudio="$PulseAudio" \
   --build-arg ENABLE_zh_tz_ARG="$ENABLE_zh_tz" \
   --build-arg ENABLE_binfmt_ARG="$ENABLE_binfmt" \
@@ -171,7 +214,6 @@ docker buildx build \
   --build-arg ENABLE_tmoe_ARG="$ENABLE_tmoe" \
   --build-arg ENABLE_nosnap_ARG="$ENABLE_nosnap" \
   --build-arg ENABLE_systemd257_ARG="$ENABLE_systemd257" \
-  --build-arg ENABLE_anland_kde_ARG="$ENABLE_anland_kde" \
   --build-arg ENABLE_8gen2_wayland_ARG="$ENABLE_8gen2_wayland" \
   --build-arg ANLAND_KDE_RELEASE_REPOSITORY="$ANLAND_KDE_RELEASE_REPOSITORY" \
   --build-arg ANLAND_KDE_RELEASE_TAG="$ANLAND_KDE_RELEASE_TAG" \

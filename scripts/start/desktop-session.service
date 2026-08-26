@@ -1,5 +1,5 @@
 [Unit]
-Description=Start Plasma Mobile
+Description=Start Droidspaces Desktop Session
 After=network.target display-manager.service
 StartLimitIntervalSec=60
 StartLimitBurst=5
@@ -8,9 +8,8 @@ StartLimitBurst=5
 Type=simple
 User=1000
 PAMName=login
-
 EnvironmentFile=-/etc/environment
-ExecStart=/bin/bash -lc 'startplasmamobile'
+ExecStart=/usr/local/bin/start-desktop-session
 Restart=on-failure
 RestartSec=2s
 

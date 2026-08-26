@@ -2,7 +2,7 @@ English | [中文](README.md)
 
 # Droidspaces RootFS Automated Build
 
-This project builds Linux RootFS archives for Droidspaces through GitHub Actions. The build system is based on Dockerfile templates and exposes common options for distribution selection, KDE desktop size, Chinese localization, input method support, Snapdragon GPU acceleration, audio forwarding, TMOE, Docker, development tools, and Wayland/Anland support.
+This project builds Linux RootFS archives for Droidspaces through GitHub Actions. The build uses extensible desktop profiles and independently selected display backends. KDE and KDE Mobile are currently provided; future desktops can be added under `scripts/desktops/` without duplicating distribution Dockerfiles.
 
 The goal is to reduce the amount of manual setup required to run a desktop Linux container on Android. Fork the repository, choose the build options in GitHub Actions, wait for the Release artifact, then import the generated `.tar.xz` RootFS into Droidspaces.
 
@@ -13,7 +13,7 @@ The goal is to reduce the amount of manual setup required to run a desktop Linux
 - [Build Options](#build-options)
 - [Build with GitHub Actions](#build-with-github-actions)
 - [Import into Droidspaces](#import-into-droidspaces)
-- [Start KDE Desktop](#start-kde-desktop)
+- [Start Desktop](#start-desktop)
 - [Wayland and Anland Setup](#wayland-and-anland-setup)
 - [Droidspaces USB Manager](#droidspaces-usb-manager)
 - [Account, Password, and Username Changes](#account-password-and-username-changes)
@@ -25,29 +25,29 @@ The goal is to reduce the amount of manual setup required to run a desktop Linux
 
 ## Supported Targets
 
-| Build target | Base image | KDE modes | Wayland/Anland | Notes |
+| Build target | Base image | Desktop profiles | Anland Wayland | Notes |
 | --- | --- | --- | --- | --- |
-| `Debian-13-KDE` | `debian:trixie` | `min`, `conc`, `mobile`, `none` | Supported | Uses the Debian 13 Trixie repositories. |
-| `Ubuntu-24-KDE` | `ubuntu:24.04` | `min`, `conc`, `none` | Not supported | Supports `nosnap`. |
-| `Ubuntu-25-KDE` | `ubuntu:25.10` | `min`, `conc`, `none` | Not supported | Supports `nosnap`. |
-| `Ubuntu-26-KDE` | `ubuntu:26.04` | `min`, `conc`, `mobile`, `none` | Supported | Supports `nosnap`; recommended for Anland KDE. |
-| `Fedora-43-KDE` | `fedora:43` | `min`, `conc`, `mobile`, `none` | Supported | Some devices require hardware access to avoid flicker or crashes. |
-| `Fedora-44-KDE` | `fedora:44` | `min`, `conc`, `mobile`, `none` | Supported | Some devices require hardware access. |
-| `Arch-KDE` | `ogarcia/archlinux` | `min`, `conc`, `mobile`, `none` | Supported | Uses ARM64 Arch patched KWin/Xwayland; this project's QEMU/binfmt flow is not recommended for Arch at the moment. |
+| `Debian-13` | `debian:trixie` | `none`, `KDE`, `KDE mobile` | Supported | Uses the Debian 13 Trixie repositories. |
+| `Ubuntu-24` | `ubuntu:24.04` | `none`, `KDE` | Not supported | Supports `nosnap`. |
+| `Ubuntu-25` | `ubuntu:25.10` | `none`, `KDE` | Not supported | Supports `nosnap`. |
+| `Ubuntu-26` | `ubuntu:26.04` | `none`, `KDE`, `KDE mobile` | Supported | Supports `nosnap`; recommended for Anland KDE. |
+| `Fedora-43` | `fedora:43` | `none`, `KDE`, `KDE mobile` | Supported | Some devices require hardware access to avoid flicker or crashes. |
+| `Fedora-44` | `fedora:44` | `none`, `KDE`, `KDE mobile` | Supported | Some devices require hardware access. |
+| `Arch` | `ogarcia/archlinux` | `none`, `KDE`, `KDE mobile` | Supported | Uses ARM64 Arch patched KWin/Xwayland; this project's QEMU/binfmt flow is not recommended for Arch at the moment. |
 
-`all` builds every Dockerfile template. For `min`, `conc`, and `mobile`, `all-wayland` builds `Debian-13-KDE`, `Ubuntu-26-KDE`, `Fedora-43-KDE`, `Fedora-44-KDE`, and `Arch-KDE`; `mobile` forces Wayland on.
+`all` builds every Dockerfile template. For `KDE` and `KDE mobile`, `all-wayland` builds `Debian-13`, `Ubuntu-26`, `Fedora-43`, `Fedora-44`, and `Arch`; `KDE mobile` forces Wayland on.
 
 ## Feature Overview
 
 - Multi-distribution RootFS builds for Debian, Ubuntu, Fedora, and Arch.
-- Scalable KDE desktop profiles, from command-line only to minimal, compact, and mobile KDE.
+- Desktop choices for command-line only, KDE, and KDE mobile RootFS images.
 - Desktop auto-start and failure recovery using shared systemd service templates for X11, Plasma Wayland, and Plasma Mobile, with rate-limited automatic restarts after failures.
 - Termux:X11 desktop startup support. X11 mode defaults to `DISPLAY=:5`.
 - PulseAudio forwarding through Unix socket, TCP, or disabled mode.
 - Optional Chinese locale with `zh_CN.UTF-8` and `Asia/Shanghai` timezone.
 - Optional Fcitx5 input method. Chinese input addons are installed when Chinese localization is enabled.
 - Snapdragon GPU support using configuration from `mesa-for-android-container`.
-- All seven distributions use `scripts/install-mesa.sh` to install the matching ARM64 Mesa driver and the latest `droidspaces-media-decode` VA-API driver, then lock related Mesa, KWin, and Xwayland packages against replacement by system upgrades. Source selection, integrity verification, supported systems, and distribution-specific lock mechanisms are documented in the [scripts directory guide](scripts/README_english.md#mesa-installer).
+- All seven distributions use `scripts/install-mesa.sh` to install the matching ARM64 Mesa driver and latest `droidspaces-media-decode` VA-API driver, then lock only the related Mesa packages. KWin/Xwayland holds belong to the Anland KDE installer. Source selection, integrity verification, and hold mechanisms are documented in the [scripts directory guide](scripts/README_english.md#mesa-installer).
 - Native ARM64 Google Chrome: every desktop profile replaces Chromium with Chrome Stable. Debian/Ubuntu and Fedora use Google's official repositories; Arch uses the ARM64 AUR packaging recipe.
 - Optional Snapdragon 8 Gen 2 Wayland display-corruption fix through a Turnip UBWC environment setting.
 - Container integration improvements for common Android/Droidspaces hardware, network, and group recognition.
@@ -55,10 +55,10 @@ The goal is to reduce the amount of manual setup required to run a desktop Linux
 - Optional development toolchain packages, including compilers, CMake, and Python development tooling.
 - Optional compression utilities such as `zip`, `unzip`, `7z`, `xz`, `tar`, and `gzip`.
 - Optional Docker packages inside the RootFS.
-- Optional old-kernel systemd compatibility: on apt, dnf, or pacman targets whose systemd major version is above 257, build and install `v257-stable`; Debian 13 and other 257-or-older systems are skipped automatically.
-- Stable ARM64 Wayland/Anland support for Debian 13, Ubuntu 26.04, Fedora 43/44, and Arch Linux through patched KWin and Xwayland packages.
+- Optional old-kernel systemd compatibility: on apt, dnf, or pacman targets whose systemd major version is above 257, install a complete package-manager-owned systemd 257 family; Debian 13 and other 257-or-older systems are skipped automatically.
+- Stable ARM64 Wayland/Anland support for Debian 13, Ubuntu 26.04, Fedora 43/44, and Arch Linux through patched KWin and Xwayland packages from the separate [`droidspaces-package`](https://github.com/Goldzxcbug/droidspaces-package) repository.
 - USB device management on every distribution through Droidspaces USB Manager, including USB storage, ADB device nodes, mounting, unmounting, and a system tray interface.
-- Automatic Release publishing with the RootFS `.tar.xz` files and matching audio startup scripts.
+- Automatic Release publishing with the RootFS `.tar.xz` files.
 
 ## Build Options
 
@@ -66,34 +66,33 @@ The main GitHub Actions inputs are:
 
 | Option | Values | Default | Description |
 | --- | --- | --- | --- |
-| Distribution to build (`build_target`) | Distribution target, `all`, `all-wayland` | `Debian-13-KDE` | Selects which RootFS target to build. |
-| Custom username (`custom_username`) | String | `Gold` | Default user inside the RootFS. The audio startup script in the Release is patched with this username. |
-| KDE desktop choice (`build_KDE`) | `conc`, `min`, `mobile`, `none` | `min` | KDE desktop size. `none` builds a command-line only RootFS. |
-| KDE desktop auto-start (`build_KDE_plus`) | `true`, `false` | `true` | Creates a systemd service to auto-start KDE. Requires a KDE mode other than `none`; turn it off when building `none`. |
-| Wayland support (`enable_anland_kde`) | `true`, `false` | `false` | Enables Wayland/Anland support on Debian 13, Ubuntu 26, Fedora 43/44, and Arch. |
+| Distribution to build (`build_target`) | Distribution target, `all`, `all-wayland` | `Debian-13` | Selects which RootFS target to build. |
+| Custom username (`custom_username`) | 1–32 letters, digits, `_`, or `-`; starts with a letter or `_` | `Gold` | Default user inside the RootFS. |
+| Desktop (`desktop`) | `none`, `KDE`, `KDE mobile` | `KDE` | Selects the command-line environment or a currently available desktop profile. |
+| Desktop auto-start (`desktop_autostart`) | `true`, `false` | `true` | Creates the common desktop session service. It must be off for `none`. |
+| Display backend (`display_backend`) | `x11`, `anland-wayland` | `x11` | Selects the display backend independently; KDE Mobile forces `anland-wayland`. |
 | PulseAudio forwarding (`PulseAudio`) | `socket`, `tcp`, `none` | `socket` | Audio forwarding mode for X11 builds. It is forced to `none` when Anland is enabled. |
 | Chinese language and timezone (`enable_zh_tz`) | `true`, `false` | `false` in the English workflow | Enables Chinese locale and the Shanghai timezone. |
 | Qualcomm Snapdragon GPU support (`enable_mesa`) | `true`, `false` | `true` | Enables Qualcomm Snapdragon GPU and Mesa-related support. |
 | Fix Snapdragon 8 Gen 2 Wayland display corruption (`enable_8gen2_wayland`) | `true`, `false` | `false` | Writes `FD_DEV_FEATURES=enable_tp_ubwc_flag_hint=1` to `/etc/environment` for Debian 13, Ubuntu 26, Fedora 43/44, and Arch. |
 | Integrate TMOE (`enable_tmoe`) | `true`, `false` | `true` | Integrates TMOE. |
 | Remove Ubuntu Snap (`nosnap`) | `true`, `false` | `false` | Ubuntu-only option that removes Snap, snapd, and APT policy paths that may reinstall snapd. |
-| systemd 257 old-kernel compatibility (`enable_systemd257`) | `true`, `false` | `false` | When enabled, builds a `v257-stable` compatibility runtime if the current systemd major version is above 257; versions 257 and older are skipped. systemd-related packages are locked after the build to prevent replacement by upgrades. |
+| systemd 257 old-kernel compatibility (`enable_systemd257`) | `true`, `false` | `false` | When enabled, installs the complete native package family from `droidspaces-package` if the current systemd major version is above 257; versions 257 and older are skipped. systemd-related packages are then locked. |
 | Fcitx5 input method support (`enable_srf`) | `true`, `false` | `false` | Installs Fcitx5 input method support. |
 | Cross-architecture support (`enable_binfmt`) | `true`, `false` | `false` | Adds binfmt cross-architecture components inside the RootFS. Not recommended for Arch in this project. |
 | NAT and hardware recognition (`enable_yj`) | `true`, `false` | `true` | Enables container hardware and network recognition improvements. |
 | Development tools integration (`enable_kfgj`) | `true`, `false` | `false` | Installs development tools. |
 | Compression tools integration (`enable_zip`) | `true`, `false` | `true` | Installs common compression tools. |
 | Docker integration (`enable_docker`) | `true`, `false` | `false` | Installs Docker-related packages inside the RootFS. |
-| Build Wayland prebuilt packages (`build_wayland_packages`) | `true`, `false` | `false` | Triggers the KWin/Xwayland prebuilt package workflow before building the RootFS. |
+| Wayland package repository (`wayland_package_repository`) | Public `owner/repository` | `Goldzxcbug/droidspaces-package` | Selects the source of the `anland-kde-packages` Release. RootFS forks are never compared with the official package repository. |
 
-KDE mode details:
+Desktop mode details:
 
 | Mode | Description | Recommended use |
 | --- | --- | --- |
 | `none` | Does not install KDE. Keeps a command-line environment only. | Lightweight RootFS, SSH use, development environments, or custom desktop setups. |
-| `min` | Minimal KDE desktop with Plasma basics and startup dependencies. | Smaller KDE builds that still provide a usable desktop. |
-| `conc` | Compact but more complete KDE desktop with more system tools, monitoring, file management, and multimedia components. | General desktop use. |
-| `mobile` | KDE Plasma Mobile components. | Phone-screen and touch-first usage; forces Wayland in this project. |
+| `KDE` | KDE desktop with system tools, monitoring, file management, and multimedia components. | General desktop use. |
+| `KDE mobile` | KDE Plasma Mobile components. | Phone-screen and touch-first usage; forces Wayland in this project. |
 
 Audio mode details:
 
@@ -108,8 +107,8 @@ Audio mode details:
 When `enable_systemd257` is enabled, the build runs `scripts/systemd257.sh`. The script first detects the installed systemd major version:
 
 - systemd 257 or older (for example Debian 13 and Ubuntu 24.04) is skipped;
-- apt, dnf, and pacman systems above 257 build systemd 257 from the official `v257-stable` branch;
-- build dependencies are removed after the build, and systemd-related packages are locked so a later upgrade does not overwrite the compatibility runtime.
+- apt, dnf, and pacman systems above 257 install their complete systemd 257 package family from the `systemd257-packages` Release in `droidspaces-package`;
+- installation is handled by the native package manager, and systemd-related packages are locked so a later upgrade does not overwrite the compatibility version.
 
 This option targets old Android kernels and is experimental. It adds substantial build time; test the desktop, dbus, udev, and networking behavior on the target kernel before distributing the image.
 
@@ -119,18 +118,17 @@ This option targets old Android kernels and is experimental. It adds substantial
 2. Open the `Actions` page in your fork.
 3. Select the Chinese workflow `编译并发布 Droidspaces RootFS` or the English workflow `Build and Release Droidspaces RootFS`.
 4. Click `Run workflow`.
-5. Choose the distribution, KDE mode, username, and feature toggles.
-6. For Wayland/Anland builds, choose `Ubuntu-26-KDE`, `Debian-13-KDE`, `Fedora-43-KDE`, `Fedora-44-KDE`, or `Arch-KDE`, then enable `enable_anland_kde`.
-7. If you want to rebuild the patched KWin/Xwayland packages before building the RootFS, enable `build_wayland_packages`.
-8. Wait for the workflow to finish. Build time depends on the number of targets, KDE mode, and GitHub runner availability.
-9. Open the `Releases` page and download the generated `.tar.xz` RootFS.
+5. Choose the distribution, desktop profile, display backend, username, and feature toggles.
+6. For Wayland/Anland builds, choose `display_backend=anland-wayland`; it is supported on Debian 13, Ubuntu 26, Fedora 43/44, and Arch.
+7. The default source is `Goldzxcbug/droidspaces-package`. To use your package fork, set `wayland_package_repository` to its public `owner/repository`; RootFS does not compare which repository is newer.
+8. To rebuild patched KWin/Xwayland packages, first run `Build Anland KDE Wayland package families` from the selected package repository's Actions page.
+9. Wait for the RootFS workflow, then open its `Releases` page and download the generated `.tar.xz`.
 
 The Release usually contains:
 
 - One or more RootFS archives
-- RootFS filenames are marked by display mode as `X11`, `Wayland`, or `Mobile`, for example `Ubuntu-26-KDE-Mobile-Droidspaces-rootfs-aarch64-v20260702-120000.tar.xz`.
-- `on_aaudio_socket.sh` or `on_aaudio_tcp.sh` when `PulseAudio` is set to `socket` or `tcp` and `build_KDE_plus=false`.
-- A Release body that records the build target, KDE mode, Wayland setting, username, and feature toggles.
+- RootFS filenames include the desktop slug and display backend, for example `Ubuntu-26-kde-Wayland-Droidspaces-rootfs-aarch64-v20260702-120000.tar.xz`.
+- A Release body that records the build target, desktop profile, display backend, username, and feature toggles.
 
 ## Import into Droidspaces
 
@@ -143,54 +141,29 @@ The Release usually contains:
 7. For X11 mode, prepare Termux:X11.
 8. For Wayland/Anland mode, complete the host-side Anland setup described below.
 
-## Start KDE Desktop
+## Start Desktop
 
-When `build_KDE_plus` is enabled, the build installs the systemd service matching the selected desktop mode:
+When `desktop_autostart` is enabled, the build installs `desktop-session.service`. It reads `/etc/droidspaces/desktop.conf` to choose the session:
 
 | Desktop mode | Service file | Start command |
 | --- | --- | --- |
-| X11 | `plasma-x11.service` | `DISPLAY=:5 startplasma-x11` |
-| Wayland | `plasma-wayland.service` | `startplasma-wayland` |
-| Mobile | `plasma-mobile.service` | `startplasmamobile` |
+| KDE + X11 | `desktop-session.service` | `DISPLAY=:5 startplasma-x11` |
+| KDE + Anland Wayland | `desktop-session.service` | `startplasma-wayland` |
+| KDE Mobile + Anland Wayland | `desktop-session.service` | `startplasmamobile` |
 
-These services run as UID 1000 and load `/etc/environment`. If the desktop process fails, systemd restarts it after 2 seconds. If it fails more than 5 times within 60 seconds, systemd temporarily stops retrying to prevent a crash loop. A normal exit does not trigger a restart.
+This service runs as UID 1000 and loads `/etc/environment`. If the desktop process fails, systemd restarts it after 2 seconds. If it fails more than 5 times within 60 seconds, systemd temporarily stops retrying to prevent a crash loop. A normal exit does not trigger a restart.
 
 ### X11 Mode
 
-X11 mode applies to builds where `enable_anland_kde` is disabled. The default display environment is:
+X11 mode applies to builds with `display_backend=x11`. The default display environment is:
 
 ```text
 DISPLAY=:5
 ```
 
-It is recommended to keep `build_KDE_plus=true`, which is now the default. With it enabled, the RootFS creates a KDE auto-start systemd service so the desktop can start after the container boots. Disable it only when you want to use the Termux-side `on_aaudio_*` script to start the desktop manually, or when building a `none` command-line environment.
+It is recommended to keep `desktop_autostart=true`, which is the default. The RootFS then creates a common desktop auto-start service. Disable it only to manage the desktop process yourself or when building a `none` command-line environment.
 
-If the Release includes an audio startup script, run it from Termux to start PulseAudio, Termux:X11, and KDE:
-
-```bash
-chmod +x on_aaudio_socket.sh
-./on_aaudio_socket.sh
-```
-
-Or:
-
-```bash
-chmod +x on_aaudio_tcp.sh
-./on_aaudio_tcp.sh
-```
-
-Before using the script, check the variables at the top:
-
-```bash
-CONTAINER_NAME="your Droidspaces container name"
-USERNAME="your RootFS username"
-DISPLAY_NUMBER=":5"
-DPI=315
-```
-
-`USERNAME` is patched automatically during Release generation according to `custom_username`, but `CONTAINER_NAME` must still match the container name in Droidspaces.
-
-If you do not use the helper script, enter the container and start KDE manually:
+When auto-start is disabled, enter the container and start KDE manually:
 
 ```bash
 startplasma-x11
@@ -200,7 +173,7 @@ The actual auto-start behavior still depends on Droidspaces systemd support, per
 
 ### Wayland/Anland Mode
 
-Wayland/Anland mode applies to Debian 13, Ubuntu 26, Fedora 43/44, and Arch builds where `enable_anland_kde` is enabled. The default environment includes:
+Wayland/Anland mode applies to Debian 13, Ubuntu 26, Fedora 43/44, and Arch builds with `display_backend=anland-wayland`. The default environment includes:
 
 ```text
 WAYLAND_DISPLAY=wayland-0
@@ -217,7 +190,7 @@ After completing the host-side Anland setup, run this inside the container:
 startplasma-wayland
 ```
 
-For a `mobile` build, the corresponding manual start command is:
+For a `KDE mobile` build, the corresponding manual start command is:
 
 ```bash
 startplasmamobile
@@ -225,11 +198,11 @@ startplasmamobile
 
 ## Wayland and Anland Setup
 
-Wayland support depends on [anland](https://github.com/superturtlee/anland) and patched KWin/Xwayland prebuilt packages published through GitHub Releases. `Ubuntu-26-KDE` is recommended, while `Debian-13-KDE`, `Fedora-43-KDE`, `Fedora-44-KDE`, and `Arch-KDE` are also available. Arch rebuilds its packages in an ARM64 Arch container through `producers/kde/Arch_v5/build.sh` from the selected anland repository.
+Wayland support depends on [anland](https://github.com/superturtlee/anland) and patched KWin/Xwayland prebuilt packages published by [`droidspaces-package`](https://github.com/Goldzxcbug/droidspaces-package). `Ubuntu-26` is recommended, while `Debian-13`, `Fedora-43`, `Fedora-44`, and `Arch` are also available. Package builds, updates, and the fixed rolling Release are maintained in the separate package repository.
 
 ### One-Click Installation of Anland KDE Release Packages
 
-`scripts/install-anland-kde.sh` detects the ARM64 distribution, installs matching patched KWin/Xwayland packages from the fixed rolling Release, and locks the related packages. Supported systems, download mirrors, integrity checks, options, and standalone installation details are documented in the [scripts directory guide](scripts/README_english.md#anland-kde-installer).
+`scripts/install-anland-kde.sh` detects the ARM64 distribution, installs matching patched KWin/Xwayland packages from the fixed rolling Release in `Goldzxcbug/droidspaces-package` by default, and locks the related packages. Supported systems, download mirrors, integrity checks, options, and standalone installation details are documented in the [scripts directory guide](scripts/README_english.md#anland-kde-installer).
 
 Run it from the repository root:
 
@@ -241,10 +214,10 @@ Recommended build options:
 
 | Option | Recommended value |
 | --- | --- |
-| `build_target` | `Ubuntu-26-KDE` |
-| `build_KDE` | `min`, `conc`, or `mobile` |
-| `build_KDE_plus` | `true` |
-| `enable_anland_kde` | `true` |
+| `build_target` | `Ubuntu-26` |
+| `desktop` | `KDE` or `KDE mobile` |
+| `desktop_autostart` | `true` |
+| `display_backend` | `anland-wayland` |
 | `PulseAudio` | No manual setting required; it becomes `none` when Anland is enabled |
 
 Host-side setup:
@@ -267,7 +240,7 @@ Host-side setup:
 startplasma-wayland
 ```
 
-If `mobile` is selected, the workflow forces Wayland on because Plasma Mobile is configured through the Wayland path in this project.
+If `KDE mobile` is selected, the workflow forces Wayland on because Plasma Mobile is configured through the Wayland path in this project.
 
 ## Droidspaces USB Manager
 
@@ -300,10 +273,11 @@ Native build example:
 ```bash
 chmod +x build_rootfs-native.sh
 ./build_rootfs-native.sh \
-  -i Debian-13-KDE.Dockerfile \
+  -i Debian-13.Dockerfile \
   -v local \
-  -K min \
+  -K KDE \
   -L true \
+  -B x11 \
   -P socket \
   -g true \
   -a false \
@@ -317,8 +291,7 @@ chmod +x build_rootfs-native.sh
   -n false \
   -S false \
   -t false \
-  -u Gold \
-  -A false
+  -u Gold
 ```
 
 QEMU arm64 build example:
@@ -326,10 +299,11 @@ QEMU arm64 build example:
 ```bash
 chmod +x build_rootfs-qemu-aarch64.sh
 ./build_rootfs-qemu-aarch64.sh \
-  -i Ubuntu-26-KDE.Dockerfile \
+  -i Ubuntu-26.Dockerfile \
   -v local \
-  -K conc \
+  -K KDE \
   -L true \
+  -B anland-wayland \
   -P none \
   -g true \
   -a false \
@@ -343,14 +317,13 @@ chmod +x build_rootfs-qemu-aarch64.sh
   -n true \
   -S false \
   -t false \
-  -u Gold \
-  -A true
+  -u Gold
 ```
 
 After a successful build, the output file will look similar to:
 
 ```text
-Ubuntu-26-KDE-Wayland-Droidspaces-rootfs-aarch64-local.tar.xz
+Ubuntu-26-kde-Wayland-Droidspaces-rootfs-aarch64-local.tar.xz
 ```
 
 ## Install Hardware Firmware
@@ -367,48 +340,52 @@ sudo download-firmware
 
 ```text
 .
-├── Arch-KDE.Dockerfile
-├── Debian-13-KDE.Dockerfile
-├── Fedora-43-KDE.Dockerfile
-├── Fedora-44-KDE.Dockerfile
-├── Ubuntu-24-KDE.Dockerfile
-├── Ubuntu-25-KDE.Dockerfile
-├── Ubuntu-26-KDE.Dockerfile
+├── Arch.Dockerfile
+├── Debian-13.Dockerfile
+├── Fedora-43.Dockerfile
+├── Fedora-44.Dockerfile
+├── Ubuntu-24.Dockerfile
+├── Ubuntu-25.Dockerfile
+├── Ubuntu-26.Dockerfile
 ├── build_rootfs-native.sh
 ├── build_rootfs-qemu-aarch64.sh
 ├── scripts/
 │   ├── README.md
 │   ├── README_english.md
+│   ├── configure-desktop.sh
+│   ├── install-desktop.sh
+│   ├── start-desktop-session.sh
+│   ├── desktops/
+│   │   ├── kde.sh
+│   │   └── kde-mobile.sh
+│   ├── lib/
+│   │   └── desktop-config.sh
 │   ├── start/
-│   │   ├── plasma-mobile.service
-│   │   ├── plasma-wayland.service
-│   │   └── plasma-x11.service
+│   │   └── desktop-session.service
 │   ├── bashrc.sh
 │   ├── download-firmware
 │   ├── install-usb-manager.sh
 │   ├── install-anland-kde.sh
 │   ├── install-mesa.sh
 │   ├── nosnap.sh
-│   ├── systemd257.sh
-│   ├── on_aaudio_socket.sh
-│   └── on_aaudio_tcp.sh
+│   └── systemd257.sh
 ├── scripts/binfmt/
 │   ├── qemu-binfmt-register.service
 │   └── qemu-binfmt-register.sh
 └── .github/workflows/
-    ├── build-kde-wayland.yml
+    ├── build-rootfs-core.yml
     ├── build-rootfs-releases-en.yml
     └── build-rootfs-releases.yml
 ```
 
-KDE packages are published only as GitHub Release assets. When running `build-kde-wayland.yml` manually, `build_target=all` pins one Anland source commit and rebuilds all five platforms. If one platform fails, the workflow reuses that platform's archive from the fixed rolling Release, updates only the successful platforms, and rewrites the same `anland-kde-packages` Release with its archives and `anland-kde-manifest`. Selecting one platform rebuilds and replaces only that package; the other four archives remain unchanged. If the fixed Release cannot provide a complete five-platform set, or no new package succeeds, the workflow fails without updating the Release. It never commits packages or rewrites `main`; the fixed rolling Release is preserved.
+The KDE Wayland package workflow and fixed rolling Release now live in [`droidspaces-package`](https://github.com/Goldzxcbug/droidspaces-package). RootFS always reads `anland-kde-packages` from the selected package repository; it does not switch sources merely because the RootFS repository is a fork, and it does not compare build times. To maintain custom packages, fork the package repository, run its workflow to publish a complete Release with the same tag, and set the RootFS `wayland_package_repository` input to that public fork's `owner/repository`.
 
 ## Known Limitations
 
 - Wayland/Anland support covers Debian 13, Ubuntu 26, Fedora 43/44, and Arch.
 - Ubuntu 24 and Ubuntu 25 currently use the X11 path.
-- `mobile` mode is supported on Debian 13, Ubuntu 26, Fedora 43/44, and Arch.
-- When Anland is enabled, the workflow disables PulseAudio forwarding because the Anland app provides its own audio path.
+- `KDE mobile` mode is supported on Debian 13, Ubuntu 26, Fedora 43/44, and Arch.
+- When `anland-wayland` is selected, the workflow disables PulseAudio forwarding because the Anland app provides its own audio path.
 - Fedora may require hardware access on some devices to avoid flicker or crashes.
 - Ubuntu and Debian may lag or freeze if `noseccomp` is disabled or the kernel lacks `USER_NS`.
 - The default password is `1234`; change it after importing the RootFS.

@@ -2,8 +2,9 @@ ARG TARGETPLATFORM
 FROM ubuntu:24.04 AS customizer
 
 #######################################################
-ARG BUILD_KDE
-ARG BUILD_KDE_plus
+ARG DESKTOP
+ARG DESKTOP_AUTOSTART
+ARG DISPLAY_BACKEND
 ARG PulseAudio
 ARG ENABLE_zh_tz_ARG
 ARG ENABLE_binfmt_ARG
@@ -40,9 +41,13 @@ COPY scripts/bashrc.sh /etc/profile.d/ds-aliases.sh
 # 通用 Droidspaces USB Manager 安装器
 COPY scripts/install-usb-manager.sh /usr/local/sbin/install-droidspaces-usb-manager
 COPY scripts/install-mesa.sh /usr/local/sbin/install-mesa
+COPY scripts/install-desktop.sh /usr/local/sbin/install-desktop
+COPY scripts/configure-desktop.sh /usr/local/sbin/configure-desktop
+COPY scripts/start-desktop-session.sh /usr/local/bin/start-desktop-session
+COPY scripts/desktops/ /usr/local/lib/droidspaces/desktops/
 
 # 赋予相关脚本可执行权限
-RUN chmod +x /usr/local/bin/download-firmware /usr/local/sbin/nosnap /etc/profile.d/ds-aliases.sh /usr/local/sbin/install-mesa
+RUN chmod +x /usr/local/bin/download-firmware /usr/local/sbin/nosnap /etc/profile.d/ds-aliases.sh /usr/local/sbin/install-mesa /usr/local/sbin/install-desktop /usr/local/sbin/configure-desktop /usr/local/bin/start-desktop-session /usr/local/lib/droidspaces/desktops/*.sh
 
 RUN apt-get update && \
     apt-get install -y --no-install-recommends ca-certificates curl wget && \
@@ -66,26 +71,7 @@ RUN apt-get update && \
     procps \
     # 核心内核模块支持
     kmod tzdata && \
-    ############################################## KDE支持 ################################################
-    # 最小化KDE
-    # 解除底层系统对中文等翻译文件(.mo)的剔除规则，防止安装桌面时丢包
-    sed -i 's|^path-exclude=/usr/share/locale/\*/LC_MESSAGES/\*.mo|#&|' /etc/dpkg/dpkg.cfg.d/excludes || true && \
-    if [ "$BUILD_KDE" = "min" ]; then \
-        apt-get install -y --no-install-recommends \
-        dbus-x11 x11-xserver-utils fonts-noto-cjk fonts-noto-color-emoji kde-plasma-desktop pipewire pipewire-pulse wireplumber powerdevil kscreen plasma-pa ark kwin-x11 upower konsole \
-        dolphin kate kinfocenter mesa-utils pulseaudio-utils vulkan-tools  dbus-user-session polkit-kde-agent-1; \
-    fi && \
-    # 精简KDE
-    if [ "$BUILD_KDE" = "conc" ]; then \
-        apt-get install -y --no-install-recommends \
-        dbus-x11 x11-xserver-utils fonts-noto-cjk fonts-noto-color-emoji kde-plasma-desktop kubuntu-settings-desktop kubuntu-wallpapers \
-        pipewire pipewire-pulse wireplumber powerdevil kscreen plasma-pa ark kwin-x11 upower konsole \
-        dolphin kate kinfocenter mesa-utils pulseaudio-utils vulkan-tools dbus-user-session aha clinfo dmidecode libdisplay-info-bin wayland-utils xserver-xorg \
-        kfind plasma-systemmonitor filelight glmark2 systemsettings kde-config-screenlocker kio-extras xdg-user-dirs dolphin-plugins ffmpegthumbs kdegraphics-thumbnailers \
-        kimageformat-plugins plasma-browser-integration libcanberra-pulse gstreamer1.0-plugins-base gstreamer1.0-plugins-good sound-theme-freedesktop \
-        polkit-kde-agent-1 libpam-systemd libpam-modules libpam-kwallet5 language-pack-kde-zh-hans language-pack-zh-hans qt6-translations-l10n; \
-    fi && \
-    ######################################################################################################
+    /usr/local/sbin/install-desktop "$DESKTOP" && \
     #输入法 fcitx5 (可选)
     if [ "$ENABLE_srf_ARG" = "true" ]; then \
         apt-get install -y fcitx5; \
@@ -193,19 +179,7 @@ EOF
     fi
 
     echo 'export XDG_RUNTIME_DIR=/run/user/$(id -u)' >> /home/${USERNAME}/.bashrc
-    if [ "$BUILD_KDE" = "min" ] || [ "$BUILD_KDE" = "conc" ] ; then
-    mkdir -p /home/${USERNAME}/.config
-    cat <<'EOF' > /home/${USERNAME}/.config/kwinrc
-[Compositing]
-Enabled=false
-EOF
-    fi
-    chown -R ${USERNAME}:${USERNAME} /home/${USERNAME}
-    if [ "$BUILD_KDE_plus" = "true" ] ; then
-    install -Dm644 /tmp/droidspaces-start/plasma-x11.service /etc/systemd/system/plasma-x11.service
-    mkdir -p /etc/systemd/system/multi-user.target.wants
-    ln -sf /etc/systemd/system/plasma-x11.service /etc/systemd/system/multi-user.target.wants/plasma-x11.service
-    fi
+    /usr/local/sbin/configure-desktop "$DESKTOP" "$DISPLAY_BACKEND" "$DESKTOP_AUTOSTART" "$USERNAME"
     rm -rf /tmp/droidspaces-start
 EOF_RUN
 
@@ -216,7 +190,7 @@ RUN if [ "$ENABLE_mesa_ARG" = "true" ]; then \
     fi
 
 # 从 Google 官方 APT 软件源安装原生 ARM64 Chrome，替换 Chromium。
-RUN if [ "$BUILD_KDE" = "min" ] || [ "$BUILD_KDE" = "conc" ] || [ "$BUILD_KDE" = "mobile" ]; then \
+RUN if [ "$DESKTOP" != "none" ]; then \
         install -d -m 0755 /etc/apt/keyrings /etc/apt/sources.list.d && \
         curl -fsSL https://dl.google.com/linux/linux_signing_key.pub -o /etc/apt/keyrings/google-chrome.asc && \
         grep -q 'BEGIN PGP PUBLIC KEY BLOCK' /etc/apt/keyrings/google-chrome.asc && \

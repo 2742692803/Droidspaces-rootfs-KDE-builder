@@ -1,9 +1,9 @@
 ARG TARGETPLATFORM
-FROM debian:trixie AS customizer
+FROM ubuntu:26.04 AS customizer
 
 #######################################################
-ARG BUILD_KDE
-ARG BUILD_KDE_plus
+ARG DESKTOP
+ARG DESKTOP_AUTOSTART
 ARG PulseAudio
 ARG ENABLE_zh_tz_ARG
 ARG ENABLE_binfmt_ARG
@@ -14,11 +14,13 @@ ARG ENABLE_zip_ARG
 ARG ENABLE_docker_ARG
 ARG ENABLE_srf_ARG
 ARG ENABLE_tmoe_ARG
-ARG ENABLE_anland_kde_ARG
+ARG DISPLAY_BACKEND
+ARG INSTALL_ANLAND_KDE_PACKAGES
 ARG ENABLE_8gen2_wayland_ARG
+ARG ENABLE_nosnap_ARG
 ARG ENABLE_systemd257_ARG
 ARG USERNAME
-ARG ANLAND_KDE_RELEASE_REPOSITORY=Goldzxcbug/Droidspaces-rootfs-KDE-builder
+ARG ANLAND_KDE_RELEASE_REPOSITORY=Goldzxcbug/droidspaces-package
 ARG ANLAND_KDE_RELEASE_TAG
 ARG ANLAND_KDE_PACKAGE_REVISION=unknown
 ######################################################
@@ -33,73 +35,55 @@ RUN printf '%s\n' \
     'Acquire::Retries "3";' \
     > /etc/apt/apt.conf.d/99parallel-downloads
 
-# 更新基础系统并启用 non-free（非自由）和 contrib 软件源
-RUN (sed -i 's/main/main contrib non-free/g' /etc/apt/sources.list 2>/dev/null || sed -i 's/Components: main/Components: main contrib non-free/g' /etc/apt/sources.list.d/debian.sources) && \
-    apt-get update && \
-    apt-get upgrade -y
-
 # 优先复制自定义脚本
 COPY scripts/download-firmware /usr/local/bin/
+COPY scripts/nosnap.sh /usr/local/sbin/nosnap
+COPY scripts/systemd257.sh /usr/local/sbin/systemd257
 
 # 将自定义的 bashrc 脚本复制到根文件系统的 profile 目录
 COPY scripts/bashrc.sh /etc/profile.d/ds-aliases.sh
 
 # 通用 Droidspaces USB Manager 安装器
 COPY scripts/install-usb-manager.sh /usr/local/sbin/install-droidspaces-usb-manager
-COPY scripts/systemd257.sh /usr/local/sbin/systemd257
 COPY scripts/install-anland-kde.sh /usr/local/sbin/install-anland-kde
 COPY scripts/install-mesa.sh /usr/local/sbin/install-mesa
+COPY scripts/install-desktop.sh /usr/local/sbin/install-desktop
+COPY scripts/configure-desktop.sh /usr/local/sbin/configure-desktop
+COPY scripts/start-desktop-session.sh /usr/local/bin/start-desktop-session
+COPY scripts/desktops/ /usr/local/lib/droidspaces/desktops/
 
 # 赋予相关脚本可执行权限
-RUN chmod +x /usr/local/bin/download-firmware /etc/profile.d/ds-aliases.sh /usr/local/sbin/install-anland-kde /usr/local/sbin/install-mesa
+RUN chmod +x /usr/local/bin/download-firmware /usr/local/sbin/nosnap /etc/profile.d/ds-aliases.sh /usr/local/sbin/install-anland-kde /usr/local/sbin/install-mesa /usr/local/sbin/install-desktop /usr/local/sbin/configure-desktop /usr/local/bin/start-desktop-session /usr/local/lib/droidspaces/desktops/*.sh
+
+RUN sed -i 's/Components: main/Components: main restricted universe multiverse/g' /etc/apt/sources.list.d/ubuntu.sources 2>/dev/null || \
+    sed -i 's/main/main restricted universe multiverse/g' /etc/apt/sources.list 2>/dev/null && \
+    apt-get update && \
+    apt-get install -y --no-install-recommends ca-certificates curl wget && \
+    if [ "$ENABLE_nosnap_ARG" = "true" ]; then \
+        echo "--> [开启] nosnap: 正在预配置并移除 Ubuntu Snap..." && \
+        bash /usr/local/sbin/nosnap; \
+    else \
+        echo "--> [跳过] 未开启 nosnap"; \
+    fi && \
+    rm -f /usr/local/sbin/nosnap && \
+    apt-get update && \
+    apt-get upgrade -y
 
 RUN apt-get update && \
     apt-get install -y --no-install-recommends \
     # 核心工具组件
     bash jq dialog coreutils file findutils grep sed gawk curl wget ca-certificates locales bash-completion udev dbus systemd-sysv systemd-resolved fastfetch \
     # 用户请求的基础开发/编辑工具
-    git nano  sudo \
+    git nano sudo \
     # 网络与 SSH 工具
     openssh-server net-tools iptables iputils-ping iproute2 dnsutils \
     # 用于系统监控的 procps 进程工具
     procps \
     # 核心内核模块支持
     kmod tzdata tar && \
-    ############################################## KDE支持 ################################################
-    # 最小化KDE
-    if [ "$BUILD_KDE" = "min" ]; then \
-        apt-get install -y --no-install-recommends \
-        dbus-x11 x11-xserver-utils fonts-noto-cjk fonts-noto-color-emoji kde-plasma-desktop pipewire pipewire-pulse wireplumber powerdevil kscreen plasma-pa ark kwin-x11 upower konsole \
-        dolphin kate kinfocenter mesa-utils pulseaudio-utils vulkan-tools  desktop-base dbus-user-session; \
-    fi && \
-    # 精简KDE
-    if [ "$BUILD_KDE" = "conc" ]; then \
-        apt-get install -y --no-install-recommends \
-        dbus-x11 x11-xserver-utils fonts-noto-cjk fonts-noto-color-emoji kde-plasma-desktop pipewire pipewire-pulse wireplumber powerdevil kscreen plasma-pa ark kwin-x11 upower konsole \
-        dolphin kate kinfocenter mesa-utils pulseaudio-utils vulkan-tools  desktop-base dbus-user-session aha clinfo dmidecode libdisplay-info-bin wayland-utils xserver-xorg \
-        kfind plasma-systemmonitor filelight glmark2 vkmark systemsettings kde-config-screenlocker kio-extras xdg-user-dirs dolphin-plugins ffmpegthumbs kdegraphics-thumbnailers \
-        kimageformat6-plugins webext-plasma-browser-integration libcanberra-pulse gstreamer1.0-plugins-base gstreamer1.0-plugins-good sound-theme-freedesktop \
-        systemsettings kde-config-screenlocker kio-extras xdg-user-dirs; \
-    fi && \
-    # mobile版KDE
-    if [ "$BUILD_KDE" = "mobile" ]; then \
-        apt-get install -y --no-install-recommends \
-        dbus-x11 x11-xserver-utils fonts-noto-cjk fonts-noto-color-emoji wayland-utils xserver-xorg dbus-user-session \
-        plasma-nano plasma-mobile plasma-mobile-phone maliit-keyboard maliit-framework \
-        kwin-wayland pipewire pipewire-pulse wireplumber powerdevil plasma-pa upower pulseaudio-utils \
-        konsole dolphin kate kinfocenter mesa-utils vulkan-tools \
-        systemsettings plasma-systemmonitor kde-config-screenlocker kio-extras xdg-user-dirs \
-        dolphin-plugins ffmpegthumbs kdegraphics-thumbnailers kimageformat6-plugins plasma-settings angelfish \
-        gstreamer1.0-plugins-base gstreamer1.0-plugins-good sound-theme-freedesktop libcanberra-pulse \
-        gstreamer1.0-plugins-base gstreamer1.0-plugins-good sound-theme-freedesktop libcanberra-pulse \
-        polkit-kde-agent-1 libpam-systemd libpam-modules libpam-kwallet5 \
-        breeze-icon-theme plasma-desktoptheme libqt6svg6 qt6-svg-plugins \
-        qml6-module-org-kde-kirigami qml6-module-qtquick-controls qml6-module-qtquick-layouts qml6-module-qtquick-templates && \
-        echo "--> [mobile] 正在移除 ModemManager (容器内无真实 modem 硬件，会导致开机卡住)..." && \
-        apt-get purge -y --auto-remove modemmanager || true; \
-    fi && \
+    /usr/local/sbin/install-desktop "$DESKTOP" && \
     ############################################## anland_kde(wayland) 支持 ################################################
-    if [ "$ENABLE_anland_kde_ARG" = "true" ] && ([ "$BUILD_KDE" = "min" ] || [ "$BUILD_KDE" = "conc" ] || [ "$BUILD_KDE" = "mobile" ]); then \
+    if [ "$INSTALL_ANLAND_KDE_PACKAGES" = "true" ]; then \
         if [ -z "$ANLAND_KDE_RELEASE_TAG" ]; then \
             echo "错误：Docker 构建必须传入固定的 ANLAND_KDE_RELEASE_TAG。" >&2; \
             exit 1; \
@@ -117,7 +101,7 @@ RUN apt-get update && \
         apt-get install -y fcitx5; \
     fi && \
     if [ "$ENABLE_srf_ARG" = "true" ] && [ "$ENABLE_zh_tz_ARG" = "true" ]; then \
-        apt-get install -y  fcitx5-chinese-addons; \
+        apt-get install -y fcitx5-chinese-addons; \
     fi && \
     ## 开发工具集成 (可选)
     if [ "$ENABLE_kfgj_ARG" = "true" ]; then \
@@ -132,7 +116,7 @@ RUN apt-get update && \
     ## docker (可选)
     if [ "$ENABLE_docker_ARG" = "true" ]; then \
         apt-get install -y --no-install-recommends \
-        docker.io docker-compose docker-cli; \
+        docker.io docker-compose-v2; \
     fi && \
     ## 集成tmoe (可选)
     if [ "$ENABLE_tmoe_ARG" = "true" ]; then \
@@ -144,7 +128,7 @@ RUN apt-get update && \
     apt-get clean && \
     rm -rf /var/lib/apt/lists/*
 
-# 强制配置使用 iptables-legacy（这是兼容 Android 内核的硬性要求）
+# 强制配置使用 iptables-legacy
 RUN update-alternatives --set iptables /usr/sbin/iptables-legacy && \
     update-alternatives --set ip6tables /usr/sbin/ip6tables-legacy
 
@@ -161,23 +145,25 @@ RUN sed -i '/en_US.UTF-8/s/^# //' /etc/locale.gen && \
         locale-gen && \
         update-locale LANG=en_US.UTF-8 LC_ALL=en_US.UTF-8; \
     fi && \
-    # 配置 SSH 服务（禁用 root 密码登录，但允许常规密码认证）
     mkdir -p /var/run/sshd && \
     sed -i 's/#PermitRootLogin prohibit-password/PermitRootLogin no/' /etc/ssh/sshd_config && \
     sed -i 's/#PasswordAuthentication yes/PasswordAuthentication yes/' /etc/ssh/sshd_config && \
-    # 如果容器内存在默认的 debian 用户，则将其连同家目录一起删除
-    deluser --remove-home debian || true && \
-    useradd -m -s /bin/bash ${USERNAME} && echo "${USERNAME}:1234" | chpasswd 
+    # Ubuntu 默认用户是 ubuntu，删除它避免冲突
+    deluser --remove-home ubuntu || true && \
+    # 创建自定义用户并直接加入 shadow 组，确保锁屏验证权限
+    useradd -m -s /bin/bash -G shadow ${USERNAME} && echo "${USERNAME}:1234" | chpasswd && \
+    systemctl enable ssh
 
-# 为所有 Debian RootFS 安装 Droidspaces USB Manager
+# 为所有 Ubuntu RootFS 安装 Droidspaces USB Manager
 RUN /usr/local/sbin/install-droidspaces-usb-manager --user "${USERNAME}"
+
 
 # 添加环境变量
 RUN cat <<'EOF' > /etc/environment
 XCURSOR_SIZE=48
 EOF
 # wayland 显示服务器环境变量配置
-RUN if [ "$ENABLE_anland_kde_ARG" != "true" ]; then \
+RUN if [ "$DISPLAY_BACKEND" != "anland-wayland" ] ; then \
         echo "DISPLAY=:5" >> /etc/environment; \
     else \
         echo "WAYLAND_DISPLAY=wayland-0" >> /etc/environment; \
@@ -203,14 +189,14 @@ RUN if [ "$PulseAudio" = "socket" ]; then \
     elif [ "$PulseAudio" = "tcp" ]; then \
         echo "PULSE_SERVER=tcp:127.0.0.1:4713" >> /etc/environment; \
     fi
-
 # 修复anland 音频堵塞
-# RUN if [ "$ENABLE_anland_kde_ARG" = "true" ]; then \
+# RUN if [ "$DISPLAY_BACKEND" = "anland-wayland" ]; then \
 #        mkdir -p /home/${USERNAME}/.config && \
 #       echo -e "\n[Sounds]\nEnable=false" >> /home/${USERNAME}/.config/kdeglobals ; \
 #     fi
 
-# 输入法开机自启动
+
+# 输入法与桌面会话配置
 COPY scripts/start/ /tmp/droidspaces-start/
 RUN <<'EOF_RUN'
     if [ "$ENABLE_srf_ARG" = "true" ]; then
@@ -235,9 +221,8 @@ QT_IM_MODULE=fcitx5
 SDL_IM_MODULE=fcitx5
 GLFW_IM_MODULE=fcitx
 EOF
-    fi
-
-    if [ "$ENABLE_mesa_ARG" = "true" ] && [ "$ENABLE_anland_kde_ARG" != "true" ] ; then
+fi
+    if [ "$ENABLE_mesa_ARG" = "true" ] && [ "$DISPLAY_BACKEND" != "anland-wayland" ] ; then
         cat <<'EOF' >> /etc/environment
 MESA_LOADER_DRIVER_OVERRIDE=kgsl
 TU_DEBUG=noconform
@@ -245,36 +230,9 @@ EOF
     fi
 
     echo 'export XDG_RUNTIME_DIR=/run/user/$(id -u)' >> /home/${USERNAME}/.bashrc
-    if [ "$BUILD_KDE" = "min" ] || [ "$BUILD_KDE" = "conc" ] ; then
-    mkdir -p /home/${USERNAME}/.config
-    cat <<'EOF' > /home/${USERNAME}/.config/kwinrc
-[Compositing]
-Enabled=false
-EOF
-    fi
-    chown -R ${USERNAME}:${USERNAME} /home/${USERNAME}
-    # KDE X11 自启动
-    # KDE mobile 自启动
-    if [ "$BUILD_KDE_plus" = "true" ] && [ "$BUILD_KDE" = "mobile" ] ; then
-    install -Dm644 /tmp/droidspaces-start/plasma-mobile.service /etc/systemd/system/plasma-mobile.service
-    mkdir -p /etc/systemd/system/multi-user.target.wants
-    ln -sf /etc/systemd/system/plasma-mobile.service /etc/systemd/system/multi-user.target.wants/plasma-mobile.service
-    fi
-    # KDE X11 自启动
-    if [ "$BUILD_KDE_plus" = "true" ] && [ "$ENABLE_anland_kde_ARG" != "true" ] && [ "$BUILD_KDE" != "mobile" ] ; then
-    install -Dm644 /tmp/droidspaces-start/plasma-x11.service /etc/systemd/system/plasma-x11.service
-    mkdir -p /etc/systemd/system/multi-user.target.wants
-    ln -sf /etc/systemd/system/plasma-x11.service /etc/systemd/system/multi-user.target.wants/plasma-x11.service
-    fi
-    # KDE wayland 自启动
-    if [ "$BUILD_KDE_plus" = "true" ] && [ "$ENABLE_anland_kde_ARG" = "true" ] && [ "$BUILD_KDE" != "mobile" ] ; then
-    install -Dm644 /tmp/droidspaces-start/plasma-wayland.service /etc/systemd/system/plasma-wayland.service
-    mkdir -p /etc/systemd/system/multi-user.target.wants
-    ln -sf /etc/systemd/system/plasma-wayland.service /etc/systemd/system/multi-user.target.wants/plasma-wayland.service
-    fi
+    /usr/local/sbin/configure-desktop "$DESKTOP" "$DISPLAY_BACKEND" "$DESKTOP_AUTOSTART" "$USERNAME"
     rm -rf /tmp/droidspaces-start
 EOF_RUN
-
 
 # Mesa 驱动适配
 RUN if [ "$ENABLE_mesa_ARG" = "true" ]; then \
@@ -284,7 +242,7 @@ RUN if [ "$ENABLE_mesa_ARG" = "true" ]; then \
     fi
 
 # 从 Google 官方 APT 软件源安装原生 ARM64 Chrome，替换 Chromium。
-RUN if [ "$BUILD_KDE" = "min" ] || [ "$BUILD_KDE" = "conc" ] || [ "$BUILD_KDE" = "mobile" ]; then \
+RUN if [ "$DESKTOP" != "none" ]; then \
         install -d -m 0755 /etc/apt/keyrings /etc/apt/sources.list.d && \
         curl -fsSL https://dl.google.com/linux/linux_signing_key.pub -o /etc/apt/keyrings/google-chrome.asc && \
         grep -q 'BEGIN PGP PUBLIC KEY BLOCK' /etc/apt/keyrings/google-chrome.asc && \
@@ -294,7 +252,6 @@ RUN if [ "$BUILD_KDE" = "min" ] || [ "$BUILD_KDE" = "conc" ] || [ "$BUILD_KDE" =
     else \
         echo "--> [跳过] 命令行 RootFS 不安装 Google Chrome"; \
     fi
-
 # 修复容器内的 DHCP 网络服务配置
 RUN mkdir -p /etc/systemd/network && \
     cat <<'EOF' > /etc/systemd/network/10-eth-dhcp.network
@@ -313,23 +270,17 @@ EOF
 
 # 应用 Android 运行环境兼容性修复（重点针对 Systemd 和 Udev）
 RUN <<'EOF_RUN'
-
 # --- 1. 常规兼容性修复 ---
-# 建立 Android 网络权限组（在 Android 内核上运行 Linux 容器时，必须有这些 GID 才能正常访问网络 socket）
 grep -q '^aid_inet:' /etc/group     || echo 'aid_inet:x:3003:'    >> /etc/group
 grep -q '^aid_net_raw:' /etc/group || echo 'aid_net_raw:x:3004:' >> /etc/group
 grep -q '^aid_net_admin:' /etc/group || echo 'aid_net_admin:x:3005:' >> /etc/group
 
-# 检查并创建 droidspaces-gpu 组
 getent group droidspaces-gpu >/dev/null || groupadd -g 786 -r droidspaces-gpu
-# 为 root 用户赋予访问 Android 硬件及网络的权限组
 usermod -a -G aid_inet,aid_net_raw,input,video,tty,droidspaces-gpu root || true
 usermod -a -G aid_inet,aid_net_raw,input,video,tty,sudo,droidspaces-gpu ${USERNAME} || true
 
-# 将 _apt 的主用户组改为 aid_inet，确保 apt 包管理器在 Android 环境下可以正常联网
 grep -q '^_apt:' /etc/passwd && usermod -g aid_inet _apt || true
 
-# 确保未来通过 adduser 创建的所有新用户，都会被默认加入这些 Android 硬件与网络组
 if [ -f /etc/adduser.conf ]; then
     sed -i '/^EXTRA_GROUPS=/d; /^ADD_EXTRA_GROUPS=/d' /etc/adduser.conf
     echo 'ADD_EXTRA_GROUPS=1' >> /etc/adduser.conf
@@ -337,11 +288,9 @@ if [ -f /etc/adduser.conf ]; then
 fi
 
 # --- 2. 针对 Systemd 的特定修复 ---
-# 屏蔽在 Android 内核下容易引发报错或死锁的阻塞服务
 ln -sf /dev/null /etc/systemd/system/systemd-networkd-wait-online.service
 ln -sf /dev/null /etc/systemd/system/systemd-journald-audit.socket
 
-# 优化 Journald 日志配置（跳过内核审计、KMsg 等 Android 内核不兼容或权限受限的日志源）
 cat >> /etc/systemd/journald.conf << 'EOT'
 [Journal]
 ReadKMsg=no
@@ -377,7 +326,6 @@ else
     done
 fi
 
-# 在 systemd-logind 中禁用电源键行为处理（防止容器误拦截或处理宿主机的实体电源按键事件）
 mkdir -p /etc/systemd/logind.conf.d
 cat > /etc/systemd/logind.conf.d/99-power-key.conf << 'EOF'
 [Login]
@@ -388,8 +336,6 @@ HandlePowerKeyLongPress=ignore
 HandlePowerKeyLongPressHibernate=ignore
 EOF
 
-# 应用 udev 覆盖配置
-# 1. 触发器覆盖：限制 udevadm trigger 的扫描范围（防止冷插拔时全面扫描 Android 宿主机硬件导致卡死或冲突）
 mkdir -p /etc/systemd/system/systemd-udev-trigger.service.d
 cat > /etc/systemd/system/systemd-udev-trigger.service.d/override.conf << 'EOF'
 [Service]
@@ -397,14 +343,11 @@ ExecStart=
 ExecStart=-/usr/bin/udevadm trigger --subsystem-match=usb --subsystem-match=block --subsystem-match=input --subsystem-match=tty --subsystem-match=net
 EOF
 
-# 2. 针对只读文件系统路径（ConditionPathIsReadWrite）的覆盖，防止 udev 相关服务因为路径只读而报错中断
 for unit in systemd-udevd.service systemd-udev-trigger.service systemd-udev-settle.service systemd-udevd-kernel.socket systemd-udevd-control.socket; do
     mkdir -p "/etc/systemd/system/${unit}.d"
     printf "[Unit]\nConditionPathIsReadWrite=\n" > "/etc/systemd/system/${unit}.d/99-readonly-fix.conf"
 done
 
-# 限制特定的网络服务：只有当容器配置为 NAT 模式时才允许启动
-# 这可以有效防止容器在“主机网络模式（Host Mode）”下运行时破坏手机原本的蜂窝移动数据网络
 for unit in NetworkManager.service dhcpcd.service systemd-resolved.service systemd-networkd.service; do
     if [ -f "$GUEST_SYSTEMD_PATH/$unit" ] || [ -f "/etc/systemd/system/multi-user.target.wants/$unit" ]; then
         mkdir -p "/etc/systemd/system/${unit}.d"
@@ -415,7 +358,7 @@ ExecCondition=/bin/sh -c "grep -qE 'net_mode=(nat|gateway)' /run/droidspaces/con
 EOF
     fi
 done
-# 仅在启用硬件访问时限制 udev 服务启动
+
 for unit in systemd-udevd.service systemd-udev-trigger.service systemd-udev-settle.service; do
     if [ -f "$GUEST_SYSTEMD_PATH/$unit" ] || [ -f "/etc/systemd/system/multi-user.target.wants/$unit" ]; then
         mkdir -p "/etc/systemd/system/${unit}.d"
@@ -427,7 +370,6 @@ EOF
     fi
 done
 
-# 针对 Android 环境微调日志轮转（logrotate）的最大容量限制
 if [ -f /etc/logrotate.conf ]; then
     sed -i 's/^#maxsize.*/maxsize 50M/' /etc/logrotate.conf
     if ! grep -q "maxsize 50M" /etc/logrotate.conf; then
@@ -435,12 +377,8 @@ if [ -f /etc/logrotate.conf ]; then
     fi
 fi
 
-
-
-# 写入修复完成的标记和时间戳
 echo "Post-extraction fixes applied on $(date)" > /etc/droidspaces
 EOF_RUN
-
 
 COPY scripts/binfmt/qemu-binfmt-register.sh /usr/local/bin/
 COPY scripts/binfmt/qemu-binfmt-register.service /etc/systemd/system/
@@ -458,17 +396,18 @@ RUN if [ "$ENABLE_binfmt_ARG" = "true" ]; then \
         apt-get autoremove -y && \
         apt-get autoclean && \
         rm -rf /var/lib/binfmts/* /etc/binfmt.d/* /usr/lib/binfmt.d/qemu-* && \
-        apt-get update && \
-        apt-get install -y qemu-user-static binfmt-support && \
-        # 显式添加 amd64 异构架构支持
         dpkg --add-architecture amd64 && \
+        sed -i '/^Types: deb/a Architectures: arm64' /etc/apt/sources.list.d/ubuntu.sources && \
+        printf "Types: deb\nURIs: http://archive.ubuntu.com/ubuntu/\nSuites: resolute resolute-updates resolute-security\nComponents: main universe restricted multiverse\nArchitectures: amd64\nSigned-By: /usr/share/keyrings/ubuntu-archive-keyring.gpg\n" > /etc/apt/sources.list.d/ubuntu-amd64.sources && \
         apt-get update && \
-        apt-get install -y libc6:amd64; \
+        (apt-get install -y --no-install-recommends qemu-user-binfmt libc6:amd64 libc6:arm64 libc-bin || \
+         apt-get install -y --no-install-recommends qemu-user-binfmt) && \
+        apt-get clean; \
     else \
         rm -f /usr/local/bin/qemu-binfmt-register.sh /etc/systemd/system/qemu-binfmt-register.service; \
     fi
 
-# Debian 13 当前为 systemd 257，脚本会自动检测并跳过；保留统一选项便于未来版本。
+# 可选：为 Ubuntu 26.04 的旧 Android 内核运行环境构建 systemd 257。
 RUN if [ "$ENABLE_systemd257_ARG" = "true" ]; then \
         bash /usr/local/sbin/systemd257; \
     else \
@@ -476,12 +415,8 @@ RUN if [ "$ENABLE_systemd257_ARG" = "true" ]; then \
     fi && \
     rm -f /usr/local/sbin/systemd257
 
-# 最终清理 APT 包管理器缓存，尽可能缩减镜像层体积
 RUN apt-get clean && \
     rm -rf /var/lib/apt/lists/*
 
-# 阶段 2：将完整的根文件系统导出到 scratch（空白层），以便外部直接提取或打包成 tarfs
 FROM scratch AS export
-
-# 从 customizer 编译阶段将所有定制好的根文件系统内容整体拷贝出来
 COPY --from=customizer / /

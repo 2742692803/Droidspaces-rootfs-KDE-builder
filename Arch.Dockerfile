@@ -2,14 +2,15 @@ ARG TARGETPLATFORM
 FROM ogarcia/archlinux AS customizer
 
 #######################################################
-ARG BUILD_KDE
-ARG BUILD_KDE_plus
+ARG DESKTOP
+ARG DESKTOP_AUTOSTART
 ARG PulseAudio
 ARG ENABLE_zh_tz_ARG
 ARG ENABLE_binfmt_ARG
 ARG ENABLE_yj_ARG
 ARG ENABLE_mesa_ARG
-ARG ENABLE_anland_kde_ARG
+ARG DISPLAY_BACKEND
+ARG INSTALL_ANLAND_KDE_PACKAGES
 ARG ENABLE_8gen2_wayland_ARG
 ARG ENABLE_kfgj_ARG
 ARG ENABLE_zip_ARG
@@ -18,7 +19,7 @@ ARG ENABLE_srf_ARG
 ARG ENABLE_tmoe_ARG
 ARG ENABLE_systemd257_ARG
 ARG USERNAME
-ARG ANLAND_KDE_RELEASE_REPOSITORY=Goldzxcbug/Droidspaces-rootfs-KDE-builder
+ARG ANLAND_KDE_RELEASE_REPOSITORY=Goldzxcbug/droidspaces-package
 ARG ANLAND_KDE_RELEASE_TAG
 ARG ANLAND_KDE_PACKAGE_REVISION=unknown
 ######################################################
@@ -27,15 +28,19 @@ COPY scripts/install-usb-manager.sh /usr/local/sbin/install-droidspaces-usb-mana
 COPY scripts/systemd257.sh /usr/local/sbin/systemd257
 COPY scripts/install-anland-kde.sh /usr/local/sbin/install-anland-kde
 COPY scripts/install-mesa.sh /usr/local/sbin/install-mesa
+COPY scripts/install-desktop.sh /usr/local/sbin/install-desktop
+COPY scripts/configure-desktop.sh /usr/local/sbin/configure-desktop
+COPY scripts/start-desktop-session.sh /usr/local/bin/start-desktop-session
+COPY scripts/desktops/ /usr/local/lib/droidspaces/desktops/
 
-RUN chmod +x /usr/local/sbin/install-anland-kde /usr/local/sbin/install-mesa && \
+RUN chmod +x /usr/local/sbin/install-anland-kde /usr/local/sbin/install-mesa /usr/local/sbin/install-desktop /usr/local/sbin/configure-desktop /usr/local/bin/start-desktop-session /usr/local/lib/droidspaces/desktops/*.sh && \
     sed -i '/^#ParallelDownloads/s/^#//' /etc/pacman.conf && \
     sed -i '/NoExtract.*locale/d' /etc/pacman.conf && \
     sed -i '/NoExtract.*i18n/d' /etc/pacman.conf && \
     pacman -Sy --noconfirm archlinux-keyring glibc && \
     pacman -Su --noconfirm && \
     pacman -S --noconfirm --needed \
-    # 核心工具组件 
+    # 核心工具组件
     bash jq dialog coreutils file findutils grep sed gawk curl wget ca-certificates bash-completion dbus systemd pam fastfetch logrotate \
     # 用户请求的基础开发/编辑工具
     git nano sudo \
@@ -45,42 +50,7 @@ RUN chmod +x /usr/local/sbin/install-anland-kde /usr/local/sbin/install-mesa && 
     procps-ng \
     # 核心内核模块支持
     kmod tzdata tar && \
-    ############################################## KDE支持 ################################################
-    # 最小化KDE
-    if [ "$BUILD_KDE" = "min" ]; then \
-        pacman -S --noconfirm --needed \
-        xorg-xrandr noto-fonts-cjk noto-fonts-emoji plasma-desktop pipewire pipewire-pulse wireplumber powerdevil kscreen plasma-pa ark kwin kwin-x11 upower konsole \
-        dolphin kate kinfocenter mesa-utils libpulse vulkan-tools; \
-    fi && \
-    # 精简KDE
-    if [ "$BUILD_KDE" = "conc" ]; then \
-        pacman -S --noconfirm --needed \
-        xorg-xrandr noto-fonts-cjk noto-fonts-emoji plasma-desktop pipewire pipewire-pulse wireplumber powerdevil kscreen plasma-pa ark kwin kwin-x11 upower konsole \
-        dolphin kate kinfocenter mesa-utils libpulse vulkan-tools aha clinfo dmidecode wayland-utils xorg-server \
-        kfind plasma-systemmonitor filelight glmark2 vkmark systemsettings kscreenlocker kio-extras xdg-user-dirs dolphin-plugins ffmpegthumbs kdegraphics-thumbnailers \
-        kimageformats plasma-browser-integration libcanberra gstreamer gst-plugins-base gst-plugins-good sound-theme-freedesktop; \
-    fi && \
-    # 移动版 KDE
-    if [ "$BUILD_KDE" = "mobile" ]; then \
-        pacman -S --noconfirm --needed \
-        xorg-xrandr noto-fonts-cjk noto-fonts-emoji plasma-desktop plasma-workspace \
-        plasma-mobile plasma-settings plasma-camera plasma-keyboard plasma-nano \
-        kwin kwin-x11 qt6-wayland qt6-svg qt6-virtualkeyboard wayland-utils xorg-server \
-        pipewire pipewire-pulse wireplumber powerdevil plasma-pa upower \
-        kscreen ark konsole qmlkonsole dolphin kate kinfocenter mesa-utils libpulse vulkan-tools \
-        aha clinfo dmidecode kfind plasma-systemmonitor filelight glmark2 vkmark \
-        systemsettings kscreenlocker kio-extras xdg-user-dirs \
-        dolphin-plugins ffmpegthumbs kdegraphics-thumbnailers kimageformats \
-        plasma-browser-integration angelfish kclock libcanberra \
-        gstreamer gst-plugins-base gst-plugins-good sound-theme-freedesktop \
-        polkit-kde-agent; \
-    fi && \
-    # Arch 强制安装，但是这玩意不开硬件访问会导致桌面闪退
-    if [ "$BUILD_KDE" = "conc" ] || [ "$BUILD_KDE" = "min" ] ; then \
-        mv /usr/lib/xdg-desktop-portal /usr/lib/xdg-desktop-portal.bak && \
-        mv /usr/lib/xdg-desktop-portal-kde /usr/lib/xdg-desktop-portal-kde.bak; \
-    fi && \
-    ######################################################################################################
+    /usr/local/sbin/install-desktop "$DESKTOP" && \
     #输入法 fcitx5 (可选)
     if [ "$ENABLE_srf_ARG" = "true" ]; then \
         pacman -S --noconfirm --needed fcitx5-im; \
@@ -108,10 +78,10 @@ RUN chmod +x /usr/local/sbin/install-anland-kde /usr/local/sbin/install-mesa && 
         git clone --depth=1 https://github.com/2moe/tmoe-linux.git /usr/local/etc/tmoe-linux/git && \
         ln -sf /usr/local/etc/tmoe-linux/git/debian.sh /usr/local/bin/tmoe && \
         chmod -R 755 /usr/local/etc/tmoe-linux; \
-    fi 
+    fi
 
 # 启用 Anland 时从固定滚动 GitHub Release 安装 ARM64 patched KWin/Xwayland。
-RUN if [ "$ENABLE_anland_kde_ARG" = "true" ]; then \
+RUN if [ "$INSTALL_ANLAND_KDE_PACKAGES" = "true" ]; then \
         if [ -z "$ANLAND_KDE_RELEASE_TAG" ]; then \
             echo "A fixed ANLAND_KDE_RELEASE_TAG is required for Docker builds." >&2; \
             exit 1; \
@@ -162,7 +132,7 @@ RUN for pam_file in /etc/pam.d/su /etc/pam.d/su-l; do \
 RUN cat <<'EOF' > /etc/environment
 XCURSOR_SIZE=48
 EOF
-RUN if [ "$ENABLE_anland_kde_ARG" != "true" ]; then \
+RUN if [ "$DISPLAY_BACKEND" != "anland-wayland" ]; then \
         echo 'DISPLAY=:5' >> /etc/environment; \
     fi
 # 音频选择
@@ -172,7 +142,7 @@ RUN if [ "$PulseAudio" = "socket" ]; then \
         echo "PULSE_SERVER=tcp:127.0.0.1:4713" >> /etc/environment; \
     fi
 
-RUN if [ "$ENABLE_anland_kde_ARG" = "true" ]; then \
+RUN if [ "$DISPLAY_BACKEND" = "anland-wayland" ]; then \
         echo 'WAYLAND_DISPLAY=wayland-0' >> /etc/environment; \
         echo 'QT_QPA_PLATFORM=wayland' >> /etc/environment; \
         echo 'ANLAND=1' >> /etc/environment; \
@@ -190,7 +160,7 @@ RUN if [ "$ENABLE_8gen2_wayland_ARG" = "true" ]; then \
         echo 'FD_DEV_FEATURES=enable_tp_ubwc_flag_hint=1' >> /etc/environment; \
     fi
 
-# 输入法与 KDE 开机自启动配置
+# 输入法与桌面会话配置
 COPY scripts/start/ /tmp/droidspaces-start/
 RUN <<'EOF_RUN'
     if [ "$ENABLE_srf_ARG" = "true" ]; then
@@ -216,34 +186,14 @@ SDL_IM_MODULE=fcitx5
 GLFW_IM_MODULE=fcitx
 EOF
 fi
-    if [ "$ENABLE_mesa_ARG" = "true" ] && [ "$ENABLE_anland_kde_ARG" != "true" ] ; then
+    if [ "$ENABLE_mesa_ARG" = "true" ] && [ "$DISPLAY_BACKEND" != "anland-wayland" ] ; then
         cat <<'EOF' >> /etc/environment
 MESA_LOADER_DRIVER_OVERRIDE=kgsl
 TU_DEBUG=noconform
 EOF
     fi
     echo 'export XDG_RUNTIME_DIR=/run/user/$(id -u)' >> /home/${USERNAME}/.bashrc
-    if { [ "$BUILD_KDE" = "min" ] || [ "$BUILD_KDE" = "conc" ]; } && [ "$ENABLE_anland_kde_ARG" != "true" ] ; then
-    mkdir -p /home/${USERNAME}/.config
-    cat <<'EOF' > /home/${USERNAME}/.config/kwinrc
-[Compositing]
-Enabled=false
-EOF
-    fi
-    chown -R ${USERNAME}:${USERNAME} /home/${USERNAME}
-    if [ "$BUILD_KDE_plus" = "true" ] && [ "$BUILD_KDE" = "mobile" ] ; then
-        install -Dm644 /tmp/droidspaces-start/plasma-mobile.service /etc/systemd/system/plasma-mobile.service
-        mkdir -p /etc/systemd/system/multi-user.target.wants
-        ln -sf /etc/systemd/system/plasma-mobile.service /etc/systemd/system/multi-user.target.wants/plasma-mobile.service
-    elif [ "$BUILD_KDE_plus" = "true" ] && [ "$ENABLE_anland_kde_ARG" = "true" ] ; then
-    install -Dm644 /tmp/droidspaces-start/plasma-wayland.service /etc/systemd/system/plasma-wayland.service
-    mkdir -p /etc/systemd/system/multi-user.target.wants
-    ln -sf /etc/systemd/system/plasma-wayland.service /etc/systemd/system/multi-user.target.wants/plasma-wayland.service
-    elif [ "$BUILD_KDE_plus" = "true" ] ; then
-    install -Dm644 /tmp/droidspaces-start/plasma-x11.service /etc/systemd/system/plasma-x11.service
-    mkdir -p /etc/systemd/system/multi-user.target.wants
-    ln -sf /etc/systemd/system/plasma-x11.service /etc/systemd/system/multi-user.target.wants/plasma-x11.service
-    fi
+    /usr/local/sbin/configure-desktop "$DESKTOP" "$DISPLAY_BACKEND" "$DESKTOP_AUTOSTART" "$USERNAME"
     rm -rf /tmp/droidspaces-start
 EOF_RUN
 
@@ -255,7 +205,7 @@ RUN if [ "$ENABLE_mesa_ARG" = "true" ]; then \
     fi
 
 # 通过 AUR 安装原生 ARM64 Google Chrome，替换 Chromium。
-RUN if [ "$BUILD_KDE" = "min" ] || [ "$BUILD_KDE" = "conc" ] || [ "$BUILD_KDE" = "mobile" ]; then \
+RUN if [ "$DESKTOP" != "none" ]; then \
         : > /tmp/chrome-build-packages && \
         for package in $(pacman -Sgq base-devel); do \
             if ! pacman -Qq "$package" >/dev/null 2>&1; then \

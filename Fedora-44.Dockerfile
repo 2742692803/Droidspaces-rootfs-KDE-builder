@@ -2,8 +2,8 @@ ARG TARGETPLATFORM
 FROM fedora:44 AS customizer
 
 #######################################################
-ARG BUILD_KDE
-ARG BUILD_KDE_plus
+ARG DESKTOP
+ARG DESKTOP_AUTOSTART
 ARG PulseAudio
 ARG ENABLE_zh_tz_ARG
 ARG ENABLE_binfmt_ARG
@@ -14,11 +14,12 @@ ARG ENABLE_zip_ARG
 ARG ENABLE_docker_ARG
 ARG ENABLE_srf_ARG
 ARG ENABLE_tmoe_ARG
-ARG ENABLE_anland_kde_ARG
+ARG DISPLAY_BACKEND
+ARG INSTALL_ANLAND_KDE_PACKAGES
 ARG ENABLE_8gen2_wayland_ARG
 ARG ENABLE_systemd257_ARG
 ARG USERNAME
-ARG ANLAND_KDE_RELEASE_REPOSITORY=Goldzxcbug/Droidspaces-rootfs-KDE-builder
+ARG ANLAND_KDE_RELEASE_REPOSITORY=Goldzxcbug/droidspaces-package
 ARG ANLAND_KDE_RELEASE_TAG
 ARG ANLAND_KDE_PACKAGE_REVISION=unknown
 ######################################################
@@ -30,15 +31,19 @@ COPY scripts/install-usb-manager.sh /usr/local/sbin/install-droidspaces-usb-mana
 COPY scripts/systemd257.sh /usr/local/sbin/systemd257
 COPY scripts/install-anland-kde.sh /usr/local/sbin/install-anland-kde
 COPY scripts/install-mesa.sh /usr/local/sbin/install-mesa
+COPY scripts/install-desktop.sh /usr/local/sbin/install-desktop
+COPY scripts/configure-desktop.sh /usr/local/sbin/configure-desktop
+COPY scripts/start-desktop-session.sh /usr/local/bin/start-desktop-session
+COPY scripts/desktops/ /usr/local/lib/droidspaces/desktops/
 
 # 加速下载
 RUN echo "max_parallel_downloads=10" >> /etc/dnf/dnf.conf && \
     echo "fastestmirror=True" >> /etc/dnf/dnf.conf && \
     echo "defaultyes=True" >> /etc/dnf/dnf.conf
 
-RUN chmod +x /usr/local/sbin/install-anland-kde /usr/local/sbin/install-mesa && \
+RUN chmod +x /usr/local/sbin/install-anland-kde /usr/local/sbin/install-mesa /usr/local/sbin/install-desktop /usr/local/sbin/configure-desktop /usr/local/bin/start-desktop-session /usr/local/lib/droidspaces/desktops/*.sh && \
     dnf install -y --setopt=install_weak_deps=False \
-    # 核心工具组件 
+    # 核心工具组件
     bash jq dialog coreutils file findutils grep sed gawk curl wget ca-certificates bash-completion systemd-udev dbus-daemon systemd systemd-pam systemd-resolved fastfetch \
     # 用户请求的基础开发/编辑工具
     git nano sudo \
@@ -48,40 +53,7 @@ RUN chmod +x /usr/local/sbin/install-anland-kde /usr/local/sbin/install-mesa && 
     procps-ng \
     # 核心内核模块支持及语言包
     kmod tzdata tar glibc-locale-source glibc-langpack-en glibc-langpack-zh && \
-    ############################################## KDE支持 ################################################
-    # 最小化KDE
-    echo "%_install_langs all" > /etc/rpm/macros.image-language-conf && \
-    if [ "$BUILD_KDE" = "min" ]; then \
-        dnf install -y --setopt=install_weak_deps=False \
-        dbus-x11 xrandr xset xrdb xhost google-noto-cjk-fonts google-noto-emoji-color-fonts plasma-desktop pipewire pipewire-pulseaudio wireplumber powerdevil kscreen plasma-pa ark kwin upower konsole \
-        dolphin kate kinfocenter glx-utils pulseaudio-utils vulkan-tools fedora-logos plasma-milou plasma-workspace plasma-workspace-x11 kwin-x11; \
-    fi && \
-    # 精简KDE
-    if [ "$BUILD_KDE" = "conc" ]; then \
-        dnf install -y --setopt=install_weak_deps=False \
-        dbus-x11 xrandr xset xrdb xhost google-noto-cjk-fonts google-noto-emoji-color-fonts plasma-desktop pipewire pipewire-pulseaudio wireplumber powerdevil kscreen plasma-pa ark kwin upower konsole \
-        dolphin kate kinfocenter glx-utils pulseaudio-utils vulkan-tools fedora-logos aha clinfo dmidecode libdisplay-info wayland-utils xorg-x11-server-Xorg \
-        kfind plasma-systemmonitor filelight glmark2 vkmark systemsettings kscreenlocker kio-extras xdg-user-dirs dolphin-plugins ffmpegthumbs kdegraphics-thumbnailers \
-        kf6-kimageformats plasma-browser-integration libcanberra-gtk3 gstreamer1-plugins-base gstreamer1-plugins-good sound-theme-freedesktop plasma-milou plasma-workspace plasma-workspace-x11 kwin-x11; \
-    fi && \
-    # mobile版KDE
-    if [ "$BUILD_KDE" = "mobile" ]; then \
-        dnf install -y --setopt=install_weak_deps=False \
-        dbus-x11 xrandr xset xrdb xhost google-noto-cjk-fonts google-noto-emoji-color-fonts xorg-x11-server-Xorg wayland-utils \
-        plasma-nano plasma-mobile maliit-keyboard maliit-framework \
-        kwin pipewire pipewire-pulseaudio wireplumber powerdevil plasma-pa upower pulseaudio-utils \
-        konsole dolphin kate kinfocenter glx-utils vulkan-tools \
-        systemsettings plasma-systemmonitor kscreenlocker kio-extras xdg-user-dirs \
-        dolphin-plugins ffmpegthumbs kdegraphics-thumbnailers kf6-kimageformats plasma-settings angelfish \
-        gstreamer1-plugins-base gstreamer1-plugins-good sound-theme-freedesktop libcanberra-gtk3 \
-        polkit-kde-agent-1 plasma-workspace \
-        breeze-icon-theme plasma-breeze qt6-qtsvg \
-        kf6-kirigami qt6-qtquickcontrols2 qt6-qtdeclarative \
-        glibc-langpack-zh && \
-        echo "--> [mobile] 正在移除 ModemManager (容器内无真实 modem 硬件，会导致开机卡住)..." && \
-        dnf remove -y ModemManager || true; \
-    fi && \
-    ######################################################################################################
+    /usr/local/sbin/install-desktop "$DESKTOP" && \
     # 输入法 fcitx5 (可选)
     if [ "$ENABLE_srf_ARG" = "true" ]; then \
         dnf install -y  fcitx5 fcitx5-qt fcitx5-gtk ; \
@@ -99,7 +71,7 @@ RUN chmod +x /usr/local/sbin/install-anland-kde /usr/local/sbin/install-mesa && 
         dnf install -y --setopt=install_weak_deps=False \
         zip unzip p7zip p7zip-plugins bzip2 xz tar gzip; \
     fi && \
-    ## docker (可选) 
+    ## docker (可选)
     if [ "$ENABLE_docker_ARG" = "true" ]; then \
         dnf install -y --setopt=install_weak_deps=False \
         moby-engine docker-compose docker-cli; \
@@ -115,7 +87,7 @@ RUN chmod +x /usr/local/sbin/install-anland-kde /usr/local/sbin/install-mesa && 
     rm -rf /var/cache/dnf
 
 ############################################## anland_kde(wayland) 支持 ################################################
-RUN if [ "$ENABLE_anland_kde_ARG" = "true" ] && ([ "$BUILD_KDE" = "min" ] || [ "$BUILD_KDE" = "conc" ] || [ "$BUILD_KDE" = "mobile" ]); then \
+RUN if [ "$INSTALL_ANLAND_KDE_PACKAGES" = "true" ]; then \
         if [ -z "$ANLAND_KDE_RELEASE_TAG" ]; then \
             echo "错误：Docker 构建必须传入固定的 ANLAND_KDE_RELEASE_TAG。" >&2; \
             exit 1; \
@@ -151,7 +123,7 @@ RUN if [ "$ENABLE_zh_tz_ARG" = "true" ]; then \
     sed -i 's/#PasswordAuthentication yes/PasswordAuthentication yes/' /etc/ssh/sshd_config && \
     # 删除默认可能存在的用户并创建新用户
     (userdel -r debian 2>/dev/null || true) && \
-    useradd -m -s /bin/bash ${USERNAME} && echo "${USERNAME}:1234" | chpasswd 
+    useradd -m -s /bin/bash ${USERNAME} && echo "${USERNAME}:1234" | chpasswd
 
 # 为所有 Fedora RootFS 安装 Droidspaces USB Manager
 RUN /usr/local/sbin/install-droidspaces-usb-manager --user "${USERNAME}"
@@ -160,7 +132,7 @@ RUN /usr/local/sbin/install-droidspaces-usb-manager --user "${USERNAME}"
 RUN cat <<'EOF' > /etc/environment
 XCURSOR_SIZE=48
 EOF
-RUN if [ "$ENABLE_anland_kde_ARG" != "true" ]; then \
+RUN if [ "$DISPLAY_BACKEND" != "anland-wayland" ]; then \
         echo "DISPLAY=:5" >> /etc/environment; \
     else \
         echo "WAYLAND_DISPLAY=wayland-0" >> /etc/environment; \
@@ -213,7 +185,7 @@ GLFW_IM_MODULE=fcitx
 EOF
     fi
 
-    if [ "$ENABLE_mesa_ARG" = "true" ] && [ "$ENABLE_anland_kde_ARG" != "true" ] ; then
+    if [ "$ENABLE_mesa_ARG" = "true" ] && [ "$DISPLAY_BACKEND" != "anland-wayland" ] ; then
         cat <<'EOF' >> /etc/environment
 MESA_LOADER_DRIVER_OVERRIDE=kgsl
 TU_DEBUG=noconform
@@ -221,30 +193,7 @@ EOF
     fi
 
     echo 'export XDG_RUNTIME_DIR=/run/user/$(id -u)' >> /home/${USERNAME}/.bashrc
-    if [ "$BUILD_KDE" = "min" ] || [ "$BUILD_KDE" = "conc" ] ; then
-    mkdir -p /home/${USERNAME}/.config
-    cat <<'EOF' > /home/${USERNAME}/.config/kwinrc
-[Compositing]
-Enabled=false
-EOF
-    fi
-    chown -R ${USERNAME}:${USERNAME} /home/${USERNAME}
-    if [ "$BUILD_KDE_plus" = "true" ] && [ "$BUILD_KDE" = "mobile" ] ; then
-    install -Dm644 /tmp/droidspaces-start/plasma-mobile.service /etc/systemd/system/plasma-mobile.service
-    mkdir -p /etc/systemd/system/multi-user.target.wants
-    ln -sf /etc/systemd/system/plasma-mobile.service /etc/systemd/system/multi-user.target.wants/plasma-mobile.service
-    fi
-    if [ "$BUILD_KDE_plus" = "true" ] && [ "$ENABLE_anland_kde_ARG" != "true" ] && [ "$BUILD_KDE" != "mobile" ] ; then
-    install -Dm644 /tmp/droidspaces-start/plasma-x11.service /etc/systemd/system/plasma-x11.service
-    mkdir -p /etc/systemd/system/multi-user.target.wants
-    ln -sf /etc/systemd/system/plasma-x11.service /etc/systemd/system/multi-user.target.wants/plasma-x11.service
-    fi
-    # KDE wayland 自启动
-    if [ "$BUILD_KDE_plus" = "true" ] && [ "$ENABLE_anland_kde_ARG" = "true" ] && [ "$BUILD_KDE" != "mobile" ] ; then
-    install -Dm644 /tmp/droidspaces-start/plasma-wayland.service /etc/systemd/system/plasma-wayland.service
-    mkdir -p /etc/systemd/system/multi-user.target.wants
-    ln -sf /etc/systemd/system/plasma-wayland.service /etc/systemd/system/multi-user.target.wants/plasma-wayland.service
-    fi
+    /usr/local/sbin/configure-desktop "$DESKTOP" "$DISPLAY_BACKEND" "$DESKTOP_AUTOSTART" "$USERNAME"
     rm -rf /tmp/droidspaces-start
 EOF_RUN
 
@@ -255,7 +204,7 @@ RUN if [ "$ENABLE_mesa_ARG" = "true" ]; then \
     fi
 
 # 从 Google 官方 RPM 软件源安装原生 ARM64 Chrome，替换 Chromium。
-RUN if [ "$BUILD_KDE" = "min" ] || [ "$BUILD_KDE" = "conc" ] || [ "$BUILD_KDE" = "mobile" ]; then \
+RUN if [ "$DESKTOP" != "none" ]; then \
         install -d -m 0755 /etc/pki/rpm-gpg /etc/yum.repos.d && \
         curl -fsSL https://dl.google.com/linux/linux_signing_key.pub -o /etc/pki/rpm-gpg/RPM-GPG-KEY-google-chrome && \
         grep -q 'BEGIN PGP PUBLIC KEY BLOCK' /etc/pki/rpm-gpg/RPM-GPG-KEY-google-chrome && \

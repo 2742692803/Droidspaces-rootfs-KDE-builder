@@ -1,0 +1,296 @@
+name: Droidspaces RootFS reusable build
+
+on:
+  workflow_call:
+    inputs:
+      build_target:
+        required: true
+        type: string
+      custom_username:
+        required: false
+        type: string
+        default: Gold
+      desktop:
+        required: true
+        type: string
+      desktop_autostart:
+        required: true
+        type: boolean
+      display_backend:
+        required: true
+        type: string
+      PulseAudio:
+        required: true
+        type: string
+      enable_zh_tz:
+        required: true
+        type: boolean
+      enable_mesa:
+        required: true
+        type: boolean
+      enable_8gen2_wayland:
+        required: true
+        type: boolean
+      enable_tmoe:
+        required: true
+        type: boolean
+      nosnap:
+        required: true
+        type: boolean
+      enable_systemd257:
+        required: true
+        type: boolean
+      enable_srf:
+        required: true
+        type: boolean
+      enable_binfmt:
+        required: true
+        type: boolean
+      enable_yj:
+        required: true
+        type: boolean
+      enable_kfgj:
+        required: true
+        type: boolean
+      enable_zip:
+        required: true
+        type: boolean
+      enable_docker:
+        required: true
+        type: boolean
+      wayland_package_repository:
+        required: false
+        type: string
+        default: Goldzxcbug/droidspaces-package
+
+jobs:
+  # --------------------------------------------------------
+  # Phase 1: setup (Environment preparation and variable generation)
+  # --------------------------------------------------------
+  setup:
+    runs-on: ubuntu-latest
+    outputs:
+      templates: ${{ steps.find-templates.outputs.templates }}
+      desktop: ${{ steps.find-templates.outputs.desktop }}
+      display_backend: ${{ steps.find-templates.outputs.display_backend }}
+      pulseaudio_effective: ${{ steps.find-templates.outputs.pulseaudio_effective }}
+      build_id: ${{ steps.prep.outputs.build_id }}
+      build_date: ${{ steps.prep.outputs.build_date }}
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v5
+
+      - name: Parse user build choices
+        id: find-templates
+        env:
+          BUILD_TARGET_INPUT: ${{ inputs.build_target }}
+          CUSTOM_USERNAME: ${{ inputs.custom_username }}
+          DESKTOP_AUTOSTART_INPUT: ${{ inputs.desktop_autostart }}
+          DESKTOP_INPUT: ${{ inputs.desktop }}
+          DISPLAY_BACKEND_INPUT: ${{ inputs.display_backend }}
+          PULSEAUDIO_INPUT: ${{ inputs.PulseAudio }}
+          WAYLAND_PACKAGE_REPOSITORY: ${{ inputs.wayland_package_repository }}
+        run: |
+          set -euo pipefail
+          source scripts/lib/desktop-config.sh
+
+          TARGET="$BUILD_TARGET_INPUT"
+          DESKTOP="$(desktop_normalize "$DESKTOP_INPUT")" || {
+            echo "Invalid desktop: $DESKTOP_INPUT" >&2
+            exit 1
+          }
+          DISPLAY_BACKEND="$(display_backend_normalize "$DISPLAY_BACKEND_INPUT")" || {
+            echo "Invalid display backend: $DISPLAY_BACKEND_INPUT" >&2
+            exit 1
+          }
+          DESKTOP_AUTOSTART="$DESKTOP_AUTOSTART_INPUT"
+          PULSE_AUDIO="$PULSEAUDIO_INPUT"
+
+          if [[ ! "$WAYLAND_PACKAGE_REPOSITORY" =~ ^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$ ]]; then
+            echo "Wayland package repository must use the public owner/repository format." >&2
+            exit 1
+          fi
+          if [[ ! "$CUSTOM_USERNAME" =~ ^[A-Za-z_][A-Za-z0-9_-]{0,31}$ ]]; then
+            echo "Custom username must be a 1-32 character Linux username." >&2
+            exit 1
+          fi
+
+          if [ "$DESKTOP" = "kde-mobile" ]; then
+            DISPLAY_BACKEND="anland-wayland"
+          fi
+          if [ "$DESKTOP" = "none" ] && [ "$DESKTOP_AUTOSTART" = "true" ]; then
+            echo "Desktop auto-start cannot be enabled when desktop is none." >&2
+            exit 1
+          fi
+
+          case "$TARGET" in
+            all)
+              TEMPLATES="$({
+                for dockerfile in *.Dockerfile; do
+                  candidate="${dockerfile%.Dockerfile}"
+                  if desktop_backend_supported "$candidate" "$DESKTOP" "$DISPLAY_BACKEND"; then
+                    printf '%s\n' "$candidate"
+                  fi
+                done
+              } | sort | jq -R -s -c 'split("\n")[:-1]')"
+              ;;
+            all-wayland)
+              [ "$DESKTOP" != "none" ] || {
+                echo "all-wayland requires a desktop profile." >&2
+                exit 1
+              }
+              DISPLAY_BACKEND="anland-wayland"
+              TEMPLATES="$(desktop_wayland_targets_json "$DESKTOP")"
+              ;;
+            *)
+              target_is_known "$TARGET" || {
+                echo "Unknown build target: $TARGET" >&2
+                exit 1
+              }
+              desktop_backend_supported "$TARGET" "$DESKTOP" "$DISPLAY_BACKEND" || {
+                echo "Unsupported target/profile/backend: $TARGET/$DESKTOP/$DISPLAY_BACKEND" >&2
+                exit 1
+              }
+              TEMPLATES="$(jq -n -c --arg t "$TARGET" '[$t]')"
+              ;;
+          esac
+
+          [ "$TEMPLATES" != "[]" ] || {
+            echo "No target supports $DESKTOP/$DISPLAY_BACKEND." >&2
+            exit 1
+          }
+          if [ "$DISPLAY_BACKEND" = "anland-wayland" ]; then
+            PULSE_AUDIO="none"
+          fi
+          echo "templates=$TEMPLATES" >> "$GITHUB_OUTPUT"
+          echo "desktop=$DESKTOP" >> "$GITHUB_OUTPUT"
+          echo "display_backend=$DISPLAY_BACKEND" >> "$GITHUB_OUTPUT"
+          echo "pulseaudio_effective=$PULSE_AUDIO" >> "$GITHUB_OUTPUT"
+          echo "Final decided build matrix: $TEMPLATES"
+          echo "Desktop profile: $DESKTOP"
+          echo "Display backend: $DISPLAY_BACKEND"
+          echo "Wayland package repository: $WAYLAND_PACKAGE_REPOSITORY"
+          echo "Final PulseAudio value: $PULSE_AUDIO"
+
+      - name: Prepare build metadata
+        id: prep
+        run: |
+          BUILD_DATE=$(date +'%Y-%m-%d %H:%M:%S')
+          BUILD_ID="v$(date +'%Y%m%d-%H%M%S')"
+          echo "build_date=$BUILD_DATE" >> "$GITHUB_OUTPUT"
+          echo "build_id=$BUILD_ID" >> "$GITHUB_OUTPUT"
+          echo "Build ID: $BUILD_ID"
+
+  # --------------------------------------------------------
+  # Phase 2: build (Build of regular Linux distribution RootFS)
+  # --------------------------------------------------------
+  build:
+    needs: setup
+    if: ${{ needs.setup.outputs.templates != '[]' }}
+    runs-on: ubuntu-24.04-arm
+    strategy:
+      fail-fast: false
+      matrix:
+        template: ${{ fromJson(needs.setup.outputs.templates) }}
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v5
+        with:
+          ref: ${{ github.ref_name }}
+
+      - name: Build RootFS (${{ matrix.template }})
+        env:
+          ANLAND_KDE_RELEASE_REPOSITORY: ${{ inputs.wayland_package_repository }}
+          ANLAND_KDE_RELEASE_TAG: anland-kde-packages
+          CUSTOM_USERNAME: ${{ inputs.custom_username }}
+        run: |
+          chmod +x build_rootfs-native.sh
+          ./build_rootfs-native.sh \
+            -i "${{ matrix.template }}.Dockerfile" \
+            -v "${{ needs.setup.outputs.build_id }}" \
+            -K "${{ needs.setup.outputs.desktop }}" \
+            -L "${{ inputs.desktop_autostart }}" \
+            -B "${{ needs.setup.outputs.display_backend }}" \
+            -P "${{ needs.setup.outputs.pulseaudio_effective }}" \
+            -g "${{ inputs.enable_zh_tz }}" \
+            -a "${{ inputs.enable_binfmt }}" \
+            -b "${{ inputs.enable_yj }}" \
+            -c "${{ inputs.enable_mesa }}" \
+            -d "${{ inputs.enable_kfgj }}" \
+            -e "${{ inputs.enable_zip }}" \
+            -f "${{ inputs.enable_docker }}" \
+            -h "${{ inputs.enable_srf }}" \
+            -j "${{ inputs.enable_tmoe }}" \
+            -n "${{ inputs.nosnap }}" \
+            -S "${{ inputs.enable_systemd257 }}" \
+            -t "${{ inputs.enable_8gen2_wayland }}" \
+            -u "$CUSTOM_USERNAME"
+
+      - name: Upload build artifacts
+        uses: actions/upload-artifact@v6
+        with:
+          name: ${{ matrix.template }}-${{ needs.setup.outputs.desktop }}-rootfs
+          path: "*.tar.xz"
+          retention-days: 1
+
+  # --------------------------------------------------------
+  # Phase 3: release (Summary and release)
+  # --------------------------------------------------------
+  release:
+    needs: [setup, build]
+    if: ${{ !cancelled() && needs.setup.result == 'success' && needs.build.result == 'success' }}
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v5
+
+      - name: Download all artifacts
+        uses: actions/download-artifact@v7
+        with:
+          pattern: "*-rootfs"
+          merge-multiple: true
+
+      - name: Organize resources
+        run: |
+          mkdir -p release_assets
+          mv *.tar.xz release_assets/
+
+      - name: Create unified Release
+        uses: softprops/action-gh-release@v3
+        with:
+          tag_name: ${{ needs.setup.outputs.build_id }}
+          name: "Droidspaces RootFS ${{ needs.setup.outputs.build_id }}"
+          files: "release_assets/*"
+          body: |
+            Droidspaces RootFS Automated Build
+            Build Time: ${{ needs.setup.outputs.build_date }}
+            Build Target (User Specified): ${{ inputs.build_target }}
+            Build ID: ${{ needs.setup.outputs.build_id }}
+
+            Build Options:
+            - **Custom Username**: ${{ inputs.custom_username }}
+            - **Desktop**: ${{ needs.setup.outputs.desktop }}
+            - **Desktop auto-start**: ${{ inputs.desktop_autostart }}
+            - **Display backend**: ${{ needs.setup.outputs.display_backend }}
+            - Wayland package repository: ${{ inputs.wayland_package_repository }}
+            - PulseAudio Audio Forwarding: ${{ needs.setup.outputs.pulseaudio_effective }}
+            - anland audio note: Wayland mode uses the built-in anland app audio, so PulseAudio is not needed
+            - nosnap: ${{ inputs.nosnap }}
+            - systemd 257 old-kernel compatibility: ${{ inputs.enable_systemd257 }}
+            - Use Chinese as Primary Language: ${{ inputs.enable_zh_tz }}
+            - Qualcomm Snapdragon GPU Support: ${{ inputs.enable_mesa }}
+            - Fix Snapdragon 8 Gen 2 Wayland display corruption: ${{ inputs.enable_8gen2_wayland }}
+            - Integrate TMOE: ${{ inputs.enable_tmoe }}
+            - Input Method fcitx5 Support: ${{ inputs.enable_srf }}
+            - Cross-architecture Support: ${{ inputs.enable_binfmt }}
+            - Container Hardware and Network Recognition Support: ${{ inputs.enable_yj }}
+            - Development Tools Integration: ${{ inputs.enable_kfgj }}
+            - Compression Tools Integration: ${{ inputs.enable_zip }}
+            - Docker Integration: ${{ inputs.enable_docker }}
+
+          draft: false
+          prerelease: false
+        env:
+          GITHUB_TOKEN: ${{ github.token }}

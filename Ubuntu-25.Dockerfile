@@ -1,9 +1,10 @@
 ARG TARGETPLATFORM
-FROM ubuntu:26.04 AS customizer
+FROM ubuntu:25.10 AS customizer
 
 #######################################################
-ARG BUILD_KDE
-ARG BUILD_KDE_plus
+ARG DESKTOP
+ARG DESKTOP_AUTOSTART
+ARG DISPLAY_BACKEND
 ARG PulseAudio
 ARG ENABLE_zh_tz_ARG
 ARG ENABLE_binfmt_ARG
@@ -14,14 +15,9 @@ ARG ENABLE_zip_ARG
 ARG ENABLE_docker_ARG
 ARG ENABLE_srf_ARG
 ARG ENABLE_tmoe_ARG
-ARG ENABLE_anland_kde_ARG
-ARG ENABLE_8gen2_wayland_ARG
 ARG ENABLE_nosnap_ARG
 ARG ENABLE_systemd257_ARG
 ARG USERNAME
-ARG ANLAND_KDE_RELEASE_REPOSITORY=Goldzxcbug/Droidspaces-rootfs-KDE-builder
-ARG ANLAND_KDE_RELEASE_TAG
-ARG ANLAND_KDE_PACKAGE_REVISION=unknown
 ######################################################
 
 ENV DEBIAN_FRONTEND=noninteractive
@@ -44,11 +40,14 @@ COPY scripts/bashrc.sh /etc/profile.d/ds-aliases.sh
 
 # 通用 Droidspaces USB Manager 安装器
 COPY scripts/install-usb-manager.sh /usr/local/sbin/install-droidspaces-usb-manager
-COPY scripts/install-anland-kde.sh /usr/local/sbin/install-anland-kde
 COPY scripts/install-mesa.sh /usr/local/sbin/install-mesa
+COPY scripts/install-desktop.sh /usr/local/sbin/install-desktop
+COPY scripts/configure-desktop.sh /usr/local/sbin/configure-desktop
+COPY scripts/start-desktop-session.sh /usr/local/bin/start-desktop-session
+COPY scripts/desktops/ /usr/local/lib/droidspaces/desktops/
 
 # 赋予相关脚本可执行权限
-RUN chmod +x /usr/local/bin/download-firmware /usr/local/sbin/nosnap /etc/profile.d/ds-aliases.sh /usr/local/sbin/install-anland-kde /usr/local/sbin/install-mesa
+RUN chmod +x /usr/local/bin/download-firmware /usr/local/sbin/nosnap /etc/profile.d/ds-aliases.sh /usr/local/sbin/install-mesa /usr/local/sbin/install-desktop /usr/local/sbin/configure-desktop /usr/local/bin/start-desktop-session /usr/local/lib/droidspaces/desktops/*.sh
 
 RUN sed -i 's/Components: main/Components: main restricted universe multiverse/g' /etc/apt/sources.list.d/ubuntu.sources 2>/dev/null || \
     sed -i 's/main/main restricted universe multiverse/g' /etc/apt/sources.list 2>/dev/null && \
@@ -75,57 +74,8 @@ RUN apt-get update && \
     # 用于系统监控的 procps 进程工具
     procps \
     # 核心内核模块支持
-    kmod tzdata tar && \
-    ############################################## KDE支持 ################################################
-    # 最小化KDE
-    # 解除底层系统对中文等翻译文件(.mo)的剔除规则，防止安装桌面时丢包
-    sed -i 's|^path-exclude=/usr/share/locale/\*/LC_MESSAGES/\*.mo|#&|' /etc/dpkg/dpkg.cfg.d/excludes || true && \
-    if [ "$BUILD_KDE" = "min" ]; then \
-        apt-get install -y --no-install-recommends \
-        dbus-x11 x11-xserver-utils fonts-noto-cjk fonts-noto-color-emoji kde-plasma-desktop kubuntu-settings-desktop kubuntu-wallpapers \
-        pipewire pipewire-pulse wireplumber powerdevil kscreen plasma-pa ark kwin-x11 upower konsole \
-        dolphin kate kinfocenter mesa-utils pulseaudio-utils vulkan-tools dbus-user-session \
-        polkit-kde-agent-1 libpam-systemd libpam-modules plasma-session-x11; \
-    fi && \
-    # 精简KDE
-    if [ "$BUILD_KDE" = "conc" ]; then \
-        apt-get install -y --no-install-recommends \
-        dbus-x11 x11-xserver-utils fonts-noto-cjk fonts-noto-color-emoji kde-plasma-desktop kubuntu-settings-desktop kubuntu-wallpapers \
-        pipewire pipewire-pulse wireplumber powerdevil kscreen plasma-pa ark kwin-x11 upower konsole \
-        dolphin kate kinfocenter mesa-utils pulseaudio-utils vulkan-tools dbus-user-session aha clinfo dmidecode libdisplay-info-bin wayland-utils xserver-xorg \
-        kfind plasma-systemmonitor filelight glmark2 vkmark systemsettings kde-config-screenlocker kio-extras xdg-user-dirs dolphin-plugins ffmpegthumbs kdegraphics-thumbnailers \
-        kimageformat6-plugins plasma-browser-integration libcanberra-pulse gstreamer1.0-plugins-base gstreamer1.0-plugins-good sound-theme-freedesktop \
-        polkit-kde-agent-1 libpam-systemd libpam-modules libpam-kwallet5 plasma-session-x11 language-pack-kde-zh-hans language-pack-zh-hans qt6-translations-l10n; \
-    fi && \
-    # mobile版KDE
-    if [ "$BUILD_KDE" = "mobile" ]; then \
-        apt-get install -y --no-install-recommends \
-        dbus-x11 x11-xserver-utils fonts-noto-cjk fonts-noto-color-emoji wayland-utils xserver-xorg dbus-user-session \
-        plasma-nano plasma-mobile plasma-mobile-phone maliit-keyboard maliit-framework maliit-server-qt6 \
-        kwin-wayland pipewire pipewire-pulse wireplumber powerdevil plasma-pa upower pulseaudio-utils \
-        konsole dolphin kate kinfocenter mesa-utils vulkan-tools \
-        systemsettings plasma-systemmonitor kde-config-screenlocker kio-extras xdg-user-dirs \
-        dolphin-plugins ffmpegthumbs kdegraphics-thumbnailers kimageformat6-plugins plasma-settings angelfish \
-        gstreamer1.0-plugins-base gstreamer1.0-plugins-good sound-theme-freedesktop libcanberra-pulse \
-        polkit-kde-agent-1 libpam-systemd libpam-modules libpam-kwallet5 qml6-module-org-kde-kirigami qml6-module-qtquick-controls \
-        qml6-module-qtquick-layouts qml6-module-qtquick-templates language-pack-kde-zh-hans language-pack-zh-hans qt6-translations-l10n && \
-        echo "--> [mobile] 正在移除 ModemManager (容器内无真实 modem 硬件，会导致开机卡住)..." && \
-        apt-get purge -y --auto-remove modemmanager || true; \
-    fi && \
-    ############################################## anland_kde(wayland) 支持 ################################################
-    if [ "$ENABLE_anland_kde_ARG" = "true" ] && [ "$BUILD_KDE" != "none" ]; then \
-        if [ -z "$ANLAND_KDE_RELEASE_TAG" ]; then \
-            echo "错误：Docker 构建必须传入固定的 ANLAND_KDE_RELEASE_TAG。" >&2; \
-            exit 1; \
-        fi && \
-        echo "--> [开启] 正在安装 anland_kde..." && \
-        echo "--> [开启] 从固定滚动 Release 下载预编译包 (${ANLAND_KDE_PACKAGE_REVISION})..." && \
-        ANLAND_KDE_RELEASE_REPOSITORY="$ANLAND_KDE_RELEASE_REPOSITORY" \
-        ANLAND_KDE_RELEASE_TAG="$ANLAND_KDE_RELEASE_TAG" \
-        /usr/local/sbin/install-anland-kde --1 && \
-        echo "--> [开启] anland_kde 支持已安装"; \
-    fi && \
-    ######################################################################################################
+    kmod tzdata && \
+    /usr/local/sbin/install-desktop "$DESKTOP" && \
     #输入法 fcitx5 (可选)
     if [ "$ENABLE_srf_ARG" = "true" ]; then \
         apt-get install -y fcitx5; \
@@ -191,42 +141,16 @@ RUN /usr/local/sbin/install-droidspaces-usb-manager --user "${USERNAME}"
 # 添加环境变量
 RUN cat <<'EOF' > /etc/environment
 XCURSOR_SIZE=48
+DISPLAY=:5
 EOF
-# wayland 显示服务器环境变量配置
-RUN if [ "$ENABLE_anland_kde_ARG" != "true" ] ; then \
-        echo "DISPLAY=:5" >> /etc/environment; \
-    else \
-        echo "WAYLAND_DISPLAY=wayland-0" >> /etc/environment; \
-        echo "QT_QPA_PLATFORM=wayland" >> /etc/environment; \
-        echo "ANLAND=1" >> /etc/environment; \
-        echo "ANLAND_SOCKET=/run/display.sock" >> /etc/environment; \
-        echo "ANLAND_DRM_DEVICE=/dev/dri/renderD128" >> /etc/environment; \
-        if [ "$ENABLE_mesa_ARG" = "true" ]; then \
-            echo "MESA_LOADER_DRIVER_OVERRIDE=kgsl" >> /etc/environment; \
-            echo "GALLIUM_DRIVER=kgsl" >> /etc/environment; \
-            echo "FD_FORCE_KGSL=1" >> /etc/environment; \
-        fi; \
-    fi
-
-# 修复骁龙8 Gen 2 设备在 Wayland 下的花屏问题
-RUN if [ "$ENABLE_8gen2_wayland_ARG" = "true" ]; then \
-        echo "FD_DEV_FEATURES=enable_tp_ubwc_flag_hint=1" >> /etc/environment; \
-    fi
-
 # 音频选择
 RUN if [ "$PulseAudio" = "socket" ]; then \
         echo "PULSE_SERVER=unix:/tmp/.pulse-socket" >> /etc/environment; \
     elif [ "$PulseAudio" = "tcp" ]; then \
         echo "PULSE_SERVER=tcp:127.0.0.1:4713" >> /etc/environment; \
     fi
-# 修复anland 音频堵塞
-# RUN if [ "$ENABLE_anland_kde_ARG" = "true" ]; then \
-#        mkdir -p /home/${USERNAME}/.config && \
-#       echo -e "\n[Sounds]\nEnable=false" >> /home/${USERNAME}/.config/kdeglobals ; \
-#     fi
 
-
-# 输入法开机自启动及 KDE 配置
+# 输入法与桌面会话配置
 COPY scripts/start/ /tmp/droidspaces-start/
 RUN <<'EOF_RUN'
     if [ "$ENABLE_srf_ARG" = "true" ]; then
@@ -252,7 +176,7 @@ SDL_IM_MODULE=fcitx5
 GLFW_IM_MODULE=fcitx
 EOF
 fi
-    if [ "$ENABLE_mesa_ARG" = "true" ] && [ "$ENABLE_anland_kde_ARG" != "true" ] ; then
+    if [ "$ENABLE_mesa_ARG" = "true" ] ; then
         cat <<'EOF' >> /etc/environment
 MESA_LOADER_DRIVER_OVERRIDE=kgsl
 TU_DEBUG=noconform
@@ -260,32 +184,7 @@ EOF
     fi
 
     echo 'export XDG_RUNTIME_DIR=/run/user/$(id -u)' >> /home/${USERNAME}/.bashrc
-    if [ "$BUILD_KDE" = "min" ] || [ "$BUILD_KDE" = "conc" ] ; then
-    mkdir -p /home/${USERNAME}/.config
-    cat <<'EOF' > /home/${USERNAME}/.config/kwinrc
-[Compositing]
-Enabled=false
-EOF
-    fi
-    chown -R ${USERNAME}:${USERNAME} /home/${USERNAME}
-    # KDE X11 自启动
-    if [ "$BUILD_KDE_plus" = "true" ] && [ "$ENABLE_anland_kde_ARG" != "true" ] && [ "$BUILD_KDE" != "mobile" ] ; then
-    install -Dm644 /tmp/droidspaces-start/plasma-x11.service /etc/systemd/system/plasma-x11.service
-    mkdir -p /etc/systemd/system/multi-user.target.wants
-    ln -sf /etc/systemd/system/plasma-x11.service /etc/systemd/system/multi-user.target.wants/plasma-x11.service
-    fi
-    # KDE mobile 自启动
-    if [ "$BUILD_KDE_plus" = "true" ] && [ "$BUILD_KDE" = "mobile" ] ; then
-    install -Dm644 /tmp/droidspaces-start/plasma-mobile.service /etc/systemd/system/plasma-mobile.service
-    mkdir -p /etc/systemd/system/multi-user.target.wants
-    ln -sf /etc/systemd/system/plasma-mobile.service /etc/systemd/system/multi-user.target.wants/plasma-mobile.service
-    fi
-    # KDE wayland 自启动
-    if [ "$BUILD_KDE_plus" = "true" ] && [ "$ENABLE_anland_kde_ARG" = "true" ] && [ "$BUILD_KDE" != "mobile" ] ; then
-    install -Dm644 /tmp/droidspaces-start/plasma-wayland.service /etc/systemd/system/plasma-wayland.service
-    mkdir -p /etc/systemd/system/multi-user.target.wants
-    ln -sf /etc/systemd/system/plasma-wayland.service /etc/systemd/system/multi-user.target.wants/plasma-wayland.service
-    fi
+    /usr/local/sbin/configure-desktop "$DESKTOP" "$DISPLAY_BACKEND" "$DESKTOP_AUTOSTART" "$USERNAME"
     rm -rf /tmp/droidspaces-start
 EOF_RUN
 
@@ -297,7 +196,7 @@ RUN if [ "$ENABLE_mesa_ARG" = "true" ]; then \
     fi
 
 # 从 Google 官方 APT 软件源安装原生 ARM64 Chrome，替换 Chromium。
-RUN if [ "$BUILD_KDE" = "min" ] || [ "$BUILD_KDE" = "conc" ] || [ "$BUILD_KDE" = "mobile" ]; then \
+RUN if [ "$DESKTOP" != "none" ]; then \
         install -d -m 0755 /etc/apt/keyrings /etc/apt/sources.list.d && \
         curl -fsSL https://dl.google.com/linux/linux_signing_key.pub -o /etc/apt/keyrings/google-chrome.asc && \
         grep -q 'BEGIN PGP PUBLIC KEY BLOCK' /etc/apt/keyrings/google-chrome.asc && \
@@ -307,6 +206,7 @@ RUN if [ "$BUILD_KDE" = "min" ] || [ "$BUILD_KDE" = "conc" ] || [ "$BUILD_KDE" =
     else \
         echo "--> [跳过] 命令行 RootFS 不安装 Google Chrome"; \
     fi
+
 # 修复容器内的 DHCP 网络服务配置
 RUN mkdir -p /etc/systemd/network && \
     cat <<'EOF' > /etc/systemd/network/10-eth-dhcp.network
@@ -452,17 +352,15 @@ RUN if [ "$ENABLE_binfmt_ARG" = "true" ]; then \
         apt-get autoclean && \
         rm -rf /var/lib/binfmts/* /etc/binfmt.d/* /usr/lib/binfmt.d/qemu-* && \
         dpkg --add-architecture amd64 && \
-        sed -i '/^Types: deb/a Architectures: arm64' /etc/apt/sources.list.d/ubuntu.sources && \
-        printf "Types: deb\nURIs: http://archive.ubuntu.com/ubuntu/\nSuites: resolute resolute-updates resolute-security\nComponents: main universe restricted multiverse\nArchitectures: amd64\nSigned-By: /usr/share/keyrings/ubuntu-archive-keyring.gpg\n" > /etc/apt/sources.list.d/ubuntu-amd64.sources && \
+        sed -i '/^Types: deb$/a Architectures: arm64 armhf' /etc/apt/sources.list.d/ubuntu.sources && \
+        printf "Types: deb\nURIs: http://archive.ubuntu.com/ubuntu/\nSuites: questing questing-updates questing-security\nComponents: main universe restricted multiverse\nArchitectures: amd64\nSigned-By: /usr/share/keyrings/ubuntu-archive-keyring.gpg\n" > /etc/apt/sources.list.d/ubuntu-amd64.sources && \
         apt-get update && \
-        (apt-get install -y --no-install-recommends qemu-user-binfmt libc6:amd64 libc6:arm64 libc-bin || \
-         apt-get install -y --no-install-recommends qemu-user-binfmt) && \
-        apt-get clean; \
+        apt-get install -y --no-install-recommends qemu-user-static binfmt-support libc6:amd64; \
     else \
         rm -f /usr/local/bin/qemu-binfmt-register.sh /etc/systemd/system/qemu-binfmt-register.service; \
     fi
 
-# 可选：为 Ubuntu 26.04 的旧 Android 内核运行环境构建 systemd 257。
+# 仅在发行版 systemd 主版本高于 257 时执行实际构建。
 RUN if [ "$ENABLE_systemd257_ARG" = "true" ]; then \
         bash /usr/local/sbin/systemd257; \
     else \

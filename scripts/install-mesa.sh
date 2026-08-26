@@ -800,7 +800,7 @@ configure_apt_holds() {
     cat > "$preferences_file" <<'EOF'
 # /etc/apt/preferences.d/hold-anland-package
 
-Package: xwayland libegl-mesa0 libgbm1 libgl1-mesa-dri libglx-mesa0 mesa-libgallium mesa-vulkan-drivers kwin-common kwin-data kwin-wayland libkwin6
+Package: libegl-mesa0 libgbm1 libgl1-mesa-dri libglx-mesa0 mesa-libgallium mesa-vulkan-drivers
 Pin: release *
 Pin-Priority: -1
 EOF
@@ -846,7 +846,7 @@ write_dnf_config_with_managed_block() {
     local input_file="$1"
     local output_file="$2"
     local stripped_file="$WORK_DIR/dnf.conf.stripped"
-    local excluded_packages="mesa*,kwin*,xorg-x11-server-Xwayland*"
+    local excluded_packages="mesa*"
 
     if [[ -e "$SYSTEMD257_STATE" ]]; then
         excluded_packages+=",systemd*"
@@ -993,7 +993,7 @@ configure_pacman_holds() {
     local package packages_line
     local temporary_config="$WORK_DIR/pacman.conf.locked"
     local sorted_packages_file="$WORK_DIR/pacman-holds.list"
-    local -a packages=("$@" 'kwin*' xorg-xwayland)
+    local -a packages=("$@")
     local -a unique_packages=()
 
     if [[ -e "$SYSTEMD257_STATE" ]]; then
