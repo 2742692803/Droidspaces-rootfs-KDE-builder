@@ -125,8 +125,10 @@ permissions:
 
 jobs:
   build:
+    name: 构建
     uses: ./.github/workflows/build-rootfs-core.yml
     with:
+      ui_language: zh
       build_target: ${{ inputs.build_target }}
       custom_username: ${{ inputs.custom_username }}
       desktop: ${{ inputs.desktop }}
