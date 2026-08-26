@@ -31,9 +31,11 @@ declare -a PACKAGE_NAMES=()
 declare -a SELECTED_NAMES=()
 declare -a SELECTED_FILES=()
 declare -a MANAGED_NAMES=()
+declare -a DNF_REPLACEMENT_NAMES=()
 declare -A PACKAGE_PATH=()
 declare -A PACKAGE_VERSION=()
 declare -A SELECTED_SET=()
+declare -A DNF_REPLACEMENT_SET=()
 
 log() {
   printf '[systemd257] %s\n' "$*"
@@ -488,6 +490,23 @@ ensure_no_uncovered_mismatched_packages() {
   done < <(list_installed_family_packages)
 }
 
+collect_dnf_replacement_candidates() {
+  local name
+
+  [[ "$PACKAGE_MANAGER" == dnf ]] || return 0
+
+  DNF_REPLACEMENT_NAMES=()
+  DNF_REPLACEMENT_SET=()
+  for name in "${PACKAGE_NAMES[@]}"; do
+    [[ "$name" == systemd-standalone-* ]] || continue
+    if package_is_installed "$name"; then
+      DNF_REPLACEMENT_NAMES+=("$name")
+      DNF_REPLACEMENT_SET["$name"]=1
+      log "DNF 将用完整 systemd 主包替换冲突包：$name"
+    fi
+  done
+}
+
 add_selected_package() {
   local name="$1"
 
@@ -505,9 +524,6 @@ select_packages() {
 
   for name in "${PACKAGE_NAMES[@]}"; do
     if [[ "$name" == systemd-standalone-* ]]; then
-      if package_is_installed "$name"; then
-        die "已安装冲突包 $name；完整 systemd 主包族无法与 standalone 包并存"
-      fi
       continue
     fi
     if package_is_installed "$name"; then
@@ -525,7 +541,7 @@ select_packages() {
     dnf)
       core_names=(
         systemd systemd-libs systemd-shared systemd-pam systemd-udev
-        systemd-networkd systemd-resolved
+        systemd-networkd systemd-resolved systemd-sysusers
       )
       ;;
     pacman)
@@ -539,6 +555,41 @@ select_packages() {
 
   (( ${#SELECTED_FILES[@]} > 0 )) || die "没有选出可安装的软件包"
   log "将安装 ${#SELECTED_FILES[@]} 个 257 包：${SELECTED_NAMES[*]}"
+}
+
+snapshot_dnf_package_names() {
+  local output_file="$1"
+
+  rpm -qa --queryformat '%{NAME}\n' | LC_ALL=C sort -u > "$output_file"
+}
+
+verify_controlled_dnf_removals() {
+  local before_file="$1"
+  local after_file="$2"
+  local name
+  local -a unexpected_removals=()
+  local -A installed_after=()
+
+  while IFS= read -r name; do
+    [[ -n "$name" ]] && installed_after["$name"]=1
+  done < "$after_file"
+
+  while IFS= read -r name; do
+    [[ -n "$name" ]] || continue
+    if [[ -z "${installed_after[$name]+present}" &&
+          -z "${DNF_REPLACEMENT_SET[$name]+present}" ]]; then
+      unexpected_removals+=("$name")
+    fi
+  done < "$before_file"
+
+  if (( ${#unexpected_removals[@]} > 0 )); then
+    die "DNF 事务意外删除了未授权的软件包：${unexpected_removals[*]}"
+  fi
+
+  for name in "${DNF_REPLACEMENT_NAMES[@]}"; do
+    [[ -z "${installed_after[$name]+present}" ]] ||
+      die "DNF 未能用完整 systemd 主包替换冲突包：$name"
+  done
 }
 
 prepare_pacman_transaction_config() {
@@ -603,17 +654,32 @@ prepare_pacman_transaction_config() {
 }
 
 install_selected_packages() {
+  local dnf_before="$WORK_DIR/dnf-packages.before"
+  local dnf_after="$WORK_DIR/dnf-packages.after"
+  local -a dnf_options=(
+    --allow-downgrade
+    --disableexcludes=all
+    --setopt=install_weak_deps=False
+  )
+
   log "installing the complete systemd 257 runtime through $PACKAGE_MANAGER"
 
   case "$PACKAGE_MANAGER" in
     apt)
-      apt-get install -y --no-install-recommends --allow-downgrades \
+      apt-get -o Dpkg::Options::=--force-confdef \
+        -o Dpkg::Options::=--force-confold \
+        install -y --no-install-recommends --allow-downgrades \
         --allow-change-held-packages --no-remove "${SELECTED_FILES[@]}"
       apt-get check
       ;;
     dnf)
-      dnf install -y --allow-downgrade --disableexcludes=all \
-        --setopt=install_weak_deps=False "${SELECTED_FILES[@]}"
+      snapshot_dnf_package_names "$dnf_before"
+      if (( ${#DNF_REPLACEMENT_NAMES[@]} > 0 )); then
+        dnf_options+=(--allowerasing)
+      fi
+      dnf install -y "${dnf_options[@]}" "${SELECTED_FILES[@]}"
+      snapshot_dnf_package_names "$dnf_after"
+      verify_controlled_dnf_removals "$dnf_before" "$dnf_after"
       dnf check
       ;;
     pacman)
@@ -820,6 +886,7 @@ main() {
   download_archive
   extract_and_verify_archive
   load_package_metadata
+  collect_dnf_replacement_candidates
   ensure_no_uncovered_mismatched_packages
   select_packages
   install_selected_packages
