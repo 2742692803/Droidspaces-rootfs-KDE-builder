@@ -1,22 +1,39 @@
-#!/bin/bash
+#!/usr/bin/env bash
 
-# 为旧 Android 内核构建 systemd 257 兼容运行时。
-# 脚本只处理当前 systemd 主版本高于 257 的系统；257 及更低版本会直接跳过。
+# 为旧 Android 内核安装由发行版原生打包规则构建的完整 systemd 257 包族。
 set -euo pipefail
 
 export DEBIAN_FRONTEND=noninteractive
-# 某些构建主机将 cc 包装为只读 ccache；Docker 内直接使用编译器更可靠。
-export CCACHE_DISABLE=1
 
 readonly SYSTEMD257_TARGET_MAJOR=257
-readonly SYSTEMD257_REPO="${SYSTEMD257_REPO:-https://github.com/systemd/systemd.git}"
-readonly SYSTEMD257_REF="${SYSTEMD257_REF:-v257-stable}"
+readonly SYSTEMD257_STATE="/etc/droidspaces-systemd257"
+readonly DEFAULT_RELEASE_REPOSITORY="Goldzxcbug/systemd257"
+readonly DEFAULT_RELEASE_TAG="systemd257-packages"
+readonly PACKAGE_REPOSITORY_COMMIT="0c7d16a3d63143cfa6a8a95e7ad502bb3e39200b"
+readonly MAX_ARCHIVE_BYTES=$((128 * 1024 * 1024))
 
+RELEASE_REPOSITORY="${SYSTEMD257_RELEASE_REPOSITORY:-$DEFAULT_RELEASE_REPOSITORY}"
+RELEASE_TAG="${SYSTEMD257_RELEASE_TAG:-$DEFAULT_RELEASE_TAG}"
 WORK_DIR=""
+PACKAGE_DIR=""
 PACKAGE_MANAGER=""
+TARGET=""
+ARCHIVE_NAME=""
+PINNED_ARCHIVE_SHA256=""
+EXPECTED_ARCHIVE_SHA256=""
+EXPECTED_PACKAGE_COUNT=0
 CURRENT_VERSION_LINE=""
-SOURCE_COMMIT=""
 SOURCE_VERSION=""
+PACKAGING_SOURCE=""
+
+declare -a MANIFEST_FILES=()
+declare -a PACKAGE_NAMES=()
+declare -a SELECTED_NAMES=()
+declare -a SELECTED_FILES=()
+declare -a MANAGED_NAMES=()
+declare -A PACKAGE_PATH=()
+declare -A PACKAGE_VERSION=()
+declare -A SELECTED_SET=()
 
 log() {
   printf '[systemd257] %s\n' "$*"
@@ -28,33 +45,33 @@ die() {
 }
 
 cleanup() {
-  if [ -n "$WORK_DIR" ] && [ -d "$WORK_DIR" ]; then
+  if [[ -n "$WORK_DIR" && -d "$WORK_DIR" ]]; then
     rm -rf -- "$WORK_DIR"
   fi
 }
 trap cleanup EXIT
 
-# 安装依赖、覆盖系统文件和设置包管理器锁定都需要 root 权限。
-if [ "$EUID" -ne 0 ]; then
-  die "请用 root 运行：sudo bash systemd257.sh"
-fi
+require_root() {
+  if (( EUID != 0 )); then
+    die "请用 root 运行：sudo bash systemd257.sh"
+  fi
+}
 
-# systemctl --version 不依赖正在运行的 PID 1，适合在 Docker 构建阶段探测版本。
 systemd_version_line() {
   local candidate line
 
   if command -v systemctl >/dev/null 2>&1; then
     line="$(systemctl --version 2>/dev/null | sed -n '1p')"
-    if [ -n "$line" ]; then
+    if [[ -n "$line" ]]; then
       printf '%s\n' "$line"
       return 0
     fi
   fi
 
   for candidate in /usr/lib/systemd/systemd /lib/systemd/systemd; do
-    if [ -x "$candidate" ]; then
-      line="$($candidate --version 2>/dev/null | sed -n '1p')"
-      if [ -n "$line" ]; then
+    if [[ -x "$candidate" ]]; then
+      line="$("$candidate" --version 2>/dev/null | sed -n '1p')"
+      if [[ -n "$line" ]]; then
         printf '%s\n' "$line"
         return 0
       fi
@@ -78,386 +95,741 @@ systemd_major_from_line() {
   '
 }
 
-CURRENT_VERSION_LINE="$(systemd_version_line || true)"
-[ -n "$CURRENT_VERSION_LINE" ] || die "无法检测当前 systemd 版本"
+package_version_major() {
+  local version="${1#*:}"
 
-CURRENT_MAJOR="$(systemd_major_from_line "$CURRENT_VERSION_LINE")"
-case "$CURRENT_MAJOR" in
-  ''|*[!0-9]*) die "无法从版本信息中提取主版本：$CURRENT_VERSION_LINE" ;;
-esac
+  if [[ "$version" =~ ^([0-9]+) ]]; then
+    printf '%s\n' "${BASH_REMATCH[1]}"
+    return 0
+  fi
+  return 1
+}
 
-log "current version: $CURRENT_VERSION_LINE"
-if [ "$CURRENT_MAJOR" -le "$SYSTEMD257_TARGET_MAJOR" ]; then
-  log "systemd $CURRENT_MAJOR does not require a 257 compatibility rebuild; skipped"
-  exit 0
-fi
-
-# 依据当前 RootFS 的包管理器选择依赖安装和软件包锁定方式。
-if command -v apt-get >/dev/null 2>&1 && command -v dpkg-query >/dev/null 2>&1; then
-  PACKAGE_MANAGER="apt"
-elif command -v dnf >/dev/null 2>&1 && command -v rpm >/dev/null 2>&1; then
-  PACKAGE_MANAGER="dnf"
-elif command -v pacman >/dev/null 2>&1; then
-  PACKAGE_MANAGER="pacman"
-else
-  die "仅支持 apt、dnf 或 pacman 系统"
-fi
-
-WORK_DIR="$(mktemp -d -t systemd257.XXXXXXXX)"
-SOURCE_DIR="$WORK_DIR/systemd"
-BUILD_DIR="$WORK_DIR/build"
-STAGE_DIR="$WORK_DIR/stage"
-PACKAGES_BEFORE="$WORK_DIR/packages.before"
-PACKAGES_AFTER="$WORK_DIR/packages.after"
-PACKAGES_NEW="$WORK_DIR/packages.new"
-
-# 保存构建前的软件包集合，构建完成后只移除本脚本新增的构建依赖。
-snapshot_packages() {
-  local output="$1"
+is_systemd_family_name() {
+  local name="${1%%:*}"
 
   case "$PACKAGE_MANAGER" in
     apt)
-      dpkg-query -W -f='${binary:Package}\n' 2>/dev/null | sort -u > "$output"
+      [[ "$name" == systemd || "$name" == systemd-* || "$name" == udev ||
+         "$name" == libsystemd* || "$name" == libudev* ||
+         "$name" == libpam-systemd || "$name" == libnss-systemd ||
+         "$name" == libnss-resolve || "$name" == libnss-myhostname ||
+         "$name" == libnss-mymachines ]]
       ;;
-    dnf)
-      rpm -qa --queryformat '%{NAME}\n' | sort -u > "$output"
+    dnf|pacman)
+      [[ "$name" == systemd || "$name" == systemd-* ]]
       ;;
-    pacman)
-      pacman -Qq | sort -u > "$output"
+    *)
+      return 1
       ;;
   esac
 }
 
-install_build_dependencies() {
-  log "installing build dependencies with $PACKAGE_MANAGER"
+list_installed_family_packages() {
+  local name version status
 
   case "$PACKAGE_MANAGER" in
     apt)
-      local -a packages=(
-        build-essential ca-certificates git meson ninja-build pkg-config gperf gettext m4
-        python3 python3-jinja2 libcap-dev libmount-dev libblkid-dev libkmod-dev
-        libpam0g-dev libseccomp-dev libacl1-dev liblz4-dev libzstd-dev
-        liblzma-dev libcrypt-dev
-      )
-      apt-get update
-      apt-get install -y --no-install-recommends "${packages[@]}"
+      while IFS=$'\t' read -r name version status; do
+        name="${name%%:*}"
+        if [[ "$status" == ii* ]] && is_systemd_family_name "$name"; then
+          printf '%s\t%s\n' "$name" "$version"
+        fi
+      done < <(dpkg-query -W -f='${binary:Package}\t${Version}\t${db:Status-Abbrev}\n' 2>/dev/null)
       ;;
     dnf)
-      local -a packages=(
-        gcc gcc-c++ make diffutils ca-certificates git meson ninja-build pkgconf-pkg-config
-        gperf gettext m4 python3 python3-jinja2 libcap-devel libmount-devel libblkid-devel
-        kmod-devel pam-devel libseccomp-devel libacl-devel lz4-devel
-        libzstd-devel xz-devel libxcrypt-devel
-      )
-      dnf install -y --setopt=install_weak_deps=False "${packages[@]}"
+      while IFS=$'\t' read -r name version; do
+        if is_systemd_family_name "$name"; then
+          printf '%s\t%s\n' "$name" "$version"
+        fi
+      done < <(rpm -qa --queryformat '%{NAME}\t%{VERSION}-%{RELEASE}\n')
       ;;
     pacman)
-      local -a packages=(
-        base-devel ca-certificates git meson ninja pkgconf gperf gettext m4 python
-        python-jinja libcap util-linux kmod pam libseccomp acl lz4 zstd xz
-        libxcrypt
-      )
-      pacman -Sy --noconfirm --needed "${packages[@]}"
+      while IFS=' ' read -r name version; do
+        if is_systemd_family_name "$name"; then
+          printf '%s\t%s\n' "$name" "$version"
+        fi
+      done < <(pacman -Q)
       ;;
   esac
 }
 
-remove_build_dependencies() {
-  local package_list
+has_mismatched_family_packages() {
+  local name version major
 
-  snapshot_packages "$PACKAGES_AFTER"
-  comm -13 "$PACKAGES_BEFORE" "$PACKAGES_AFTER" > "$PACKAGES_NEW"
-  if [ ! -s "$PACKAGES_NEW" ]; then
-    log "no temporary build packages need to be removed"
-    return
-  fi
+  while IFS=$'\t' read -r name version; do
+    major="$(package_version_major "$version" || true)"
+    if [[ "$major" != "$SYSTEMD257_TARGET_MAJOR" ]]; then
+      log "检测到非 257 包：$name $version"
+      return 0
+    fi
+  done < <(list_installed_family_packages)
+  return 1
+}
 
-  package_list="$(tr '\n' ' ' < "$PACKAGES_NEW")"
-  log "removing temporary build dependencies"
+detect_target() {
+  local distro_id version_id
 
-  case "$PACKAGE_MANAGER" in
-    apt)
-      # shellcheck disable=SC2086
-      apt-get purge -y $package_list || true
-      apt-get autoremove -y --purge || true
-      apt-get clean || true
+  [[ -r /etc/os-release ]] || return 1
+  # shellcheck disable=SC1091
+  source /etc/os-release
+  distro_id="${ID,,}"
+  version_id="${VERSION_ID:-}"
+
+  TARGET=""
+  PACKAGE_MANAGER=""
+  ARCHIVE_NAME=""
+  PINNED_ARCHIVE_SHA256=""
+  EXPECTED_PACKAGE_COUNT=0
+
+  case "$distro_id:$version_id" in
+    ubuntu:26.04*)
+      TARGET="ubuntu2604"
+      PACKAGE_MANAGER="apt"
+      ARCHIVE_NAME="systemd257-ubuntu2604-arm64.tar.gz"
+      PINNED_ARCHIVE_SHA256="57dc7c16da6260e53b271e345203c87a14eea85d90eabba95e3489ce8d9b7352"
+      EXPECTED_PACKAGE_COUNT=33
       ;;
-    dnf)
-      # clean_requirements_on_remove=False 防止清理构建依赖时波及原有 RootFS 软件包。
-      # shellcheck disable=SC2086
-      dnf remove -y --setopt=clean_requirements_on_remove=False $package_list || true
-      dnf clean all || true
+    fedora:43*)
+      TARGET="fedora43"
+      PACKAGE_MANAGER="dnf"
+      ARCHIVE_NAME="systemd257-fedora43-arm64.tar.gz"
+      PINNED_ARCHIVE_SHA256="536890362e8bc3bc48a20214f600b5cc8e6ce81e69f1433fcf2331c4d6d76479"
+      EXPECTED_PACKAGE_COUNT=21
       ;;
-    pacman)
-      # 只移除构建前不存在的软件包，不递归删除原有孤立依赖。
-      # shellcheck disable=SC2086
-      pacman -R --noconfirm $package_list || true
-      rm -rf /var/cache/pacman/pkg/*
+    fedora:44*)
+      TARGET="fedora44"
+      PACKAGE_MANAGER="dnf"
+      ARCHIVE_NAME="systemd257-fedora44-arm64.tar.gz"
+      PINNED_ARCHIVE_SHA256="252373294abe2090b5d681e4dbb21ddef44e16b09ae967de79fe1b74a282692e"
+      EXPECTED_PACKAGE_COUNT=21
+      ;;
+    arch:|archarm:|archlinux:)
+      TARGET="arch"
+      PACKAGE_MANAGER="pacman"
+      ARCHIVE_NAME="systemd257-arch-arm64.tar.gz"
+      PINNED_ARCHIVE_SHA256="86ebb6555747eaa19f6e1556e527ccd190e5684a885d3546ee401692f045d4ee"
+      EXPECTED_PACKAGE_COUNT=6
+      ;;
+    *)
+      return 1
       ;;
   esac
 }
 
-snapshot_packages "$PACKAGES_BEFORE"
-install_build_dependencies
+verify_target_tools_and_architecture() {
+  local architecture
 
-command -v meson >/dev/null 2>&1 || die "meson 安装失败"
-command -v ninja >/dev/null 2>&1 || die "ninja 安装失败"
-command -v git >/dev/null 2>&1 || die "git 安装失败"
-command -v diff >/dev/null 2>&1 || die "diffutils 安装失败"
+  command -v curl >/dev/null 2>&1 || die "缺少 curl，无法下载预构建包族"
+  command -v tar >/dev/null 2>&1 || die "缺少 tar，无法解压预构建包族"
+  command -v sha256sum >/dev/null 2>&1 || die "缺少 sha256sum，无法验证预构建包族"
 
-log "cloning $SYSTEMD257_REPO ($SYSTEMD257_REF)"
-if ! git clone --depth=1 --branch "$SYSTEMD257_REF" "$SYSTEMD257_REPO" "$SOURCE_DIR"; then
-  rm -rf -- "$SOURCE_DIR"
-  git clone --depth=1 "$SYSTEMD257_REPO" "$SOURCE_DIR"
-  git -C "$SOURCE_DIR" fetch --depth=1 origin "$SYSTEMD257_REF"
-  git -C "$SOURCE_DIR" checkout --detach FETCH_HEAD
-fi
-SOURCE_COMMIT="$(git -C "$SOURCE_DIR" rev-parse HEAD)"
-if [ ! -r "$SOURCE_DIR/meson.version" ]; then
-  die "systemd 源码中缺少 meson.version，无法确认版本"
-fi
-SOURCE_VERSION="$(sed -n '1p' "$SOURCE_DIR/meson.version" | tr -d '[:space:]')"
-SOURCE_MAJOR="$(systemd_major_from_line "$SOURCE_VERSION")"
-case "$SOURCE_MAJOR" in
-  "$SYSTEMD257_TARGET_MAJOR") ;;
-  *) die "源码版本不是 systemd 257：${SOURCE_VERSION:-unknown}" ;;
-esac
-log "source version: $SOURCE_VERSION (commit=$SOURCE_COMMIT)"
+  case "$PACKAGE_MANAGER" in
+    apt)
+      command -v apt-get >/dev/null 2>&1 || die "Ubuntu 目标缺少 apt-get"
+      command -v dpkg-query >/dev/null 2>&1 || die "Ubuntu 目标缺少 dpkg-query"
+      command -v dpkg-deb >/dev/null 2>&1 || die "Ubuntu 目标缺少 dpkg-deb"
+      architecture="$(dpkg --print-architecture)"
+      [[ "$architecture" == arm64 ]] || die "Ubuntu 包族仅支持 arm64，当前为 $architecture"
+      ;;
+    dnf)
+      command -v dnf >/dev/null 2>&1 || die "Fedora 目标缺少 dnf"
+      command -v rpm >/dev/null 2>&1 || die "Fedora 目标缺少 rpm"
+      architecture="$(rpm --eval '%{_arch}')"
+      [[ "$architecture" == aarch64 ]] || die "Fedora 包族仅支持 aarch64，当前为 $architecture"
+      ;;
+    pacman)
+      command -v pacman >/dev/null 2>&1 || die "Arch 目标缺少 pacman"
+      command -v bsdtar >/dev/null 2>&1 || die "Arch 目标缺少 bsdtar"
+      architecture="$(uname -m)"
+      [[ "$architecture" == aarch64 || "$architecture" == arm64 ]] ||
+        die "Arch 包族仅支持 aarch64，当前为 $architecture"
+      ;;
+  esac
+}
 
-BUILD_JOBS="${SYSTEMD257_JOBS:-}"
-if ! printf '%s' "$BUILD_JOBS" | grep -Eq '^[1-9][0-9]*$'; then
-  BUILD_JOBS="$(nproc 2>/dev/null || printf '2')"
-  if [ "$BUILD_JOBS" -gt 4 ]; then
-    BUILD_JOBS=4
+resolve_archive_checksum() {
+  [[ "$RELEASE_REPOSITORY" =~ ^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$ ]] ||
+    die "SYSTEMD257_RELEASE_REPOSITORY 不是有效的 GitHub owner/repository：$RELEASE_REPOSITORY"
+  [[ "$RELEASE_TAG" =~ ^[A-Za-z0-9._+-]+$ ]] ||
+    die "SYSTEMD257_RELEASE_TAG 包含不支持的字符：$RELEASE_TAG"
+
+  if [[ "$RELEASE_REPOSITORY" != "$DEFAULT_RELEASE_REPOSITORY" ||
+        "$RELEASE_TAG" != "$DEFAULT_RELEASE_TAG" ]]; then
+    [[ -n "${SYSTEMD257_ARCHIVE_SHA256:-}" ]] ||
+      die "覆盖 Release 仓库或标签时必须同时设置 SYSTEMD257_ARCHIVE_SHA256"
   fi
-fi
 
-log "configuring systemd 257 (jobs=$BUILD_JOBS)"
-meson setup "$BUILD_DIR" "$SOURCE_DIR" \
-  --prefix=/usr \
-  --sysconfdir=/etc \
-  --localstatedir=/var \
-  --buildtype=release \
-  --auto-features=disabled \
-  -Dmode=release \
-  -Dsplit-bin=auto \
-  -Dinstall-sysconfdir=false \
-  -Drpmmacrosdir=no \
-  -Dtests=false \
-  -Dslow-tests=false \
-  -Dfuzz-tests=false \
-  -Dintegration-tests=false \
-  -Dinstall-tests=false \
-  -Dman=disabled \
-  -Dhtml=disabled \
-  -Dtranslations=false \
-  -Defi=false \
-  -Dbootloader=disabled \
-  -Dukify=disabled \
-  -Dkernel-install=false \
-  -Dinitrd=false \
-  -Dhibernate=false \
-  -Drepart=disabled \
-  -Dsysupdate=disabled \
-  -Dsysupdated=disabled \
-  -Dhomed=disabled \
-  -Dvmspawn=disabled \
-  -Dimportd=disabled \
-  -Dremote=disabled \
-  -Dmachined=false \
-  -Dportabled=false \
-  -Dmountfsd=false \
-  -Dnsresourced=false \
-  -Duserdb=false \
-  -Dsysext=false \
-  -Dstoragetm=false \
-  -Doomd=false \
-  -Dcoredump=false \
-  -Dpstore=false \
-  -Dbacklight=false \
-  -Dvconsole=false \
-  -Drfkill=false \
-  -Dquotacheck=false \
-  -Dlibcryptsetup=disabled \
-  -Dlibcryptsetup-plugins=disabled \
-  -Dlibcurl=disabled \
-  -Dmicrohttpd=disabled \
-  -Dlibidn2=disabled \
-  -Dlibidn=disabled \
-  -Didn=false \
-  -Dqrencode=disabled \
-  -Dgcrypt=disabled \
-  -Dgnutls=disabled \
-  -Dopenssl=disabled \
-  -Ddns-over-tls=false \
-  -Ddefault-dnssec=no \
-  -Dp11kit=disabled \
-  -Dlibfido2=disabled \
-  -Dtpm=false \
-  -Dtpm2=disabled \
-  -Delfutils=disabled \
-  -Dlibarchive=disabled \
-  -Dxkbcommon=disabled \
-  -Dpcre2=disabled \
-  -Dglib=disabled \
-  -Ddbus=disabled \
-  -Dselinux=disabled \
-  -Dapparmor=disabled \
-  -Dima=false \
-  -Dipe=false \
-  -Dsmack=false \
-  -Dpolkit=disabled \
-  -Daudit=disabled \
-  -Dfdisk=disabled \
-  -Dpwquality=disabled \
-  -Dpasswdqc=disabled \
-  -Dbpf-framework=disabled \
-  -Dlibiptc=disabled \
-  -Dzlib=disabled \
-  -Dbzip2=disabled \
-  -Dseccomp=enabled \
-  -Dacl=enabled \
-  -Dblkid=enabled \
-  -Dkmod=enabled \
-  -Dpam=enabled \
-  -Dxz=enabled \
-  -Dlz4=enabled \
-  -Dzstd=enabled \
-  -Ddefault-compression=zstd \
-  -Dresolve=true \
-  -Dnetworkd=true \
-  -Dlogind=true \
-  -Dhostnamed=true \
-  -Dlocaled=true \
-  -Dtimedated=true \
-  -Dtimesyncd=true \
-  -Dsysusers=true \
-  -Dtmpfiles=true \
-  -Dhwdb=true \
-  -Dnss-myhostname=true \
-  -Dnss-systemd=true \
-  -Dnss-resolve=enabled \
-  -Dutmp=true \
-  -Ddefault-kill-user-processes=false
+  EXPECTED_ARCHIVE_SHA256="${SYSTEMD257_ARCHIVE_SHA256:-$PINNED_ARCHIVE_SHA256}"
+  [[ "$EXPECTED_ARCHIVE_SHA256" =~ ^[0-9a-fA-F]{64}$ ]] ||
+    die "SYSTEMD257_ARCHIVE_SHA256 不是有效的 SHA-256"
+  EXPECTED_ARCHIVE_SHA256="${EXPECTED_ARCHIVE_SHA256,,}"
+}
 
-log "building systemd 257"
-ninja -C "$BUILD_DIR" -j "$BUILD_JOBS"
+download_archive() {
+  local archive_file="$WORK_DIR/$ARCHIVE_NAME"
+  local download_url archive_bytes
 
-# 先安装到临时根目录，避免构建过程直接修改当前 RootFS。
-mkdir -p "$STAGE_DIR"
-DESTDIR="$STAGE_DIR" ninja -C "$BUILD_DIR" install
-
-# 保留发行版较新的公共 libsystemd/libudev ABI。旧版 systemd 可使用新库，
-# 同时避免 Arch/Fedora/Ubuntu 的桌面软件因需要新符号而失效。
-if [ -d "$STAGE_DIR/usr" ]; then
-  find "$STAGE_DIR/usr" \( -type f -o -type l \) \
-    \( -name 'libsystemd.so' -o -name 'libsystemd.so.*' \
-       -o -name 'libudev.so' -o -name 'libudev.so.*' \) -delete
-  find "$STAGE_DIR/usr" -type f \
-    \( -name 'libsystemd.pc' -o -name 'libudev.pc' \) -delete
-  rm -rf "$STAGE_DIR/usr/include"
-fi
-
-# 构建依赖清理必须在覆盖 systemd 前完成，防止包管理器脚本重新安装新版文件。
-remove_build_dependencies
-
-log "installing the systemd 257 compatibility runtime"
-cp -a "$STAGE_DIR/." /
-command -v ldconfig >/dev/null 2>&1 && ldconfig
-
-# 检查动态链接和最终版本，缺少依赖或覆盖失败时立即中止 RootFS 构建。
-SYSTEMD_DAEMON=""
-for candidate in /usr/lib/systemd/systemd /lib/systemd/systemd; do
-  if [ -x "$candidate" ]; then
-    SYSTEMD_DAEMON="$candidate"
-    break
+  if [[ -n "${SYSTEMD257_ARCHIVE_FILE:-}" ]]; then
+    [[ -f "$SYSTEMD257_ARCHIVE_FILE" ]] ||
+      die "本地归档不存在：$SYSTEMD257_ARCHIVE_FILE"
+    log "using local archive: $SYSTEMD257_ARCHIVE_FILE"
+    cp -- "$SYSTEMD257_ARCHIVE_FILE" "$archive_file"
+  else
+    download_url="https://github.com/${RELEASE_REPOSITORY}/releases/download/${RELEASE_TAG}/${ARCHIVE_NAME}"
+    log "downloading $download_url"
+    curl --proto '=https' --tlsv1.2 -fL --retry 5 --retry-all-errors \
+      --connect-timeout 30 "$download_url" -o "$archive_file"
   fi
-done
-[ -n "$SYSTEMD_DAEMON" ] || die "安装后找不到 systemd PID 1"
 
-if command -v ldd >/dev/null 2>&1; then
-  LDD_OUTPUT="$(ldd "$SYSTEMD_DAEMON" 2>&1 || true)"
-  if printf '%s\n' "$LDD_OUTPUT" | grep -q 'not found'; then
-    printf '%s\n' "$LDD_OUTPUT" >&2
-    die "systemd 257 存在缺失的动态链接库"
+  [[ -s "$archive_file" ]] || die "下载后的归档为空：$ARCHIVE_NAME"
+  archive_bytes="$(stat -c '%s' "$archive_file")"
+  (( archive_bytes <= MAX_ARCHIVE_BYTES )) ||
+    die "归档超过 ${MAX_ARCHIVE_BYTES} 字节限制：$archive_bytes"
+  printf '%s  %s\n' "$EXPECTED_ARCHIVE_SHA256" "$archive_file" | sha256sum -c -
+}
+
+extract_and_verify_archive() {
+  local archive_file="$WORK_DIR/$ARCHIVE_NAME"
+  local entry checksum_name
+  local -a actual_package_files=()
+
+  PACKAGE_DIR="$WORK_DIR/packages"
+  mkdir -p "$PACKAGE_DIR"
+
+  while IFS= read -r entry; do
+    [[ "$entry" == ./ ]] && continue
+    entry="${entry#./}"
+    [[ "$entry" =~ ^[A-Za-z0-9][A-Za-z0-9._+~:-]*$ ]] ||
+      die "归档包含不安全或非预期路径：$entry"
+  done < <(tar -tzf "$archive_file")
+
+  tar -xzf "$archive_file" --no-same-owner --no-same-permissions -C "$PACKAGE_DIR"
+  [[ -f "$PACKAGE_DIR/manifest.env" ]] || die "归档缺少 manifest.env"
+  [[ -f "$PACKAGE_DIR/SHA256SUMS" ]] || die "归档缺少内部 SHA256SUMS"
+
+  while read -r _ checksum_name; do
+    checksum_name="${checksum_name#\*}"
+    [[ "$checksum_name" =~ ^[A-Za-z0-9][A-Za-z0-9._+~:-]*$ ]] ||
+      die "内部 SHA256SUMS 包含不安全路径：$checksum_name"
+  done < "$PACKAGE_DIR/SHA256SUMS"
+  (cd "$PACKAGE_DIR" && sha256sum --check --strict SHA256SUMS)
+
+  verify_manifest
+
+  case "$PACKAGE_MANAGER" in
+    apt)
+      mapfile -t actual_package_files < <(
+        find "$PACKAGE_DIR" -maxdepth 1 -type f -name '*.deb' -printf '%f\n' | sort
+      )
+      ;;
+    dnf)
+      mapfile -t actual_package_files < <(
+        find "$PACKAGE_DIR" -maxdepth 1 -type f -name '*.rpm' -printf '%f\n' | sort
+      )
+      ;;
+    pacman)
+      mapfile -t actual_package_files < <(
+        find "$PACKAGE_DIR" -maxdepth 1 -type f -name '*.pkg.tar.*' ! -name '*.sig' -printf '%f\n' | sort
+      )
+      ;;
+  esac
+
+  if (( ${#actual_package_files[@]} != ${#MANIFEST_FILES[@]} )); then
+    die "manifest 包数量与归档不一致：manifest=${#MANIFEST_FILES[@]} archive=${#actual_package_files[@]}"
   fi
-fi
+  if [[ "$(printf '%s\n' "${MANIFEST_FILES[@]}" | sort)" != \
+        "$(printf '%s\n' "${actual_package_files[@]}" | sort)" ]]; then
+    die "manifest 包列表与归档内容不一致"
+  fi
+}
 
-INSTALLED_VERSION_LINE="$(systemd_version_line || true)"
-INSTALLED_MAJOR="$(systemd_major_from_line "$INSTALLED_VERSION_LINE")"
-if [ "$INSTALLED_MAJOR" != "$SYSTEMD257_TARGET_MAJOR" ]; then
-  die "版本验证失败，当前结果为：${INSTALLED_VERSION_LINE:-unknown}"
-fi
+manifest_value() {
+  local key="$1"
 
-# 防止 RootFS 后续普通升级把兼容运行时重新覆盖为 258+。
-case "$PACKAGE_MANAGER" in
-  apt)
-    mapfile -t systemd_packages < <(
-      dpkg-query -W -f='${binary:Package} ${Status}\n' 2>/dev/null | awk '
-        {
-          if ($NF != "installed")
-            next
-          package = $1
-          name = package
-          sub(/:.*/, "", name)
-          if (name == "udev" ||
-              name ~ /^systemd(-|$)/ ||
-              name ~ /^libsystemd/ ||
-              name ~ /^libudev/ ||
-              name == "libpam-systemd" ||
-              name == "libnss-systemd") {
-            print package
-          }
+  awk -F= -v wanted="$key" '
+    $1 == wanted {
+      count++
+      print substr($0, index($0, "=") + 1)
+    }
+    END { if (count != 1) exit 1 }
+  ' "$PACKAGE_DIR/manifest.env"
+}
+
+verify_manifest() {
+  local format manifest_target architecture compat_patch package_count
+
+  format="$(manifest_value format)" || die "manifest.env 的 format 字段无效"
+  manifest_target="$(manifest_value target)" || die "manifest.env 的 target 字段无效"
+  architecture="$(manifest_value architecture)" || die "manifest.env 的 architecture 字段无效"
+  SOURCE_VERSION="$(manifest_value systemd_source_version)" ||
+    die "manifest.env 的 systemd_source_version 字段无效"
+  PACKAGING_SOURCE="$(manifest_value packaging_source)" ||
+    die "manifest.env 的 packaging_source 字段无效"
+  compat_patch="$(manifest_value compat_patch)" || die "manifest.env 的 compat_patch 字段无效"
+  package_count="$(manifest_value package_count)" || die "manifest.env 的 package_count 字段无效"
+
+  [[ "$format" == 1 ]] || die "不支持 manifest 格式：$format"
+  [[ "$manifest_target" == "$TARGET" ]] ||
+    die "归档目标不匹配：需要 $TARGET，得到 $manifest_target"
+  [[ "$architecture" == aarch64 ]] || die "归档架构不是 aarch64：$architecture"
+  [[ "$(package_version_major "$SOURCE_VERSION" || true)" == "$SYSTEMD257_TARGET_MAJOR" ]] ||
+    die "归档源码版本不是 systemd 257：$SOURCE_VERSION"
+  [[ "$compat_patch" == 0001-droidspaces-old-kernel-compat.patch ]] ||
+    die "归档未声明 Droidspaces 旧内核兼容补丁"
+  [[ "$package_count" =~ ^[1-9][0-9]*$ ]] || die "manifest 包数量无效：$package_count"
+  (( package_count == EXPECTED_PACKAGE_COUNT )) ||
+    die "归档不是预期的完整包族：需要 $EXPECTED_PACKAGE_COUNT 个包，得到 $package_count"
+
+  mapfile -t MANIFEST_FILES < <(sed -n 's/^package=//p' "$PACKAGE_DIR/manifest.env")
+  (( ${#MANIFEST_FILES[@]} == package_count )) ||
+    die "manifest package_count 与 package 条目数量不一致"
+
+  local package_file
+  for package_file in "${MANIFEST_FILES[@]}"; do
+    [[ "$package_file" =~ ^[A-Za-z0-9][A-Za-z0-9._+~:-]*$ ]] ||
+      die "manifest 包文件名不安全：$package_file"
+    [[ -f "$PACKAGE_DIR/$package_file" ]] || die "manifest 指定的包不存在：$package_file"
+  done
+}
+
+register_package() {
+  local name="$1"
+  local version="$2"
+  local architecture="$3"
+  local path="$4"
+  local major
+
+  [[ "$name" =~ ^[A-Za-z0-9][A-Za-z0-9+._-]*$ ]] || die "软件包名无效：$name"
+  is_systemd_family_name "$name" || die "归档包含非 systemd 包族成员：$name"
+  [[ -z "${PACKAGE_PATH[$name]+present}" ]] || die "归档包含重复软件包：$name"
+
+  major="$(package_version_major "$version" || true)"
+  [[ "$major" == "$SYSTEMD257_TARGET_MAJOR" ]] ||
+    die "软件包 $name 的版本不是 257：$version"
+
+  case "$PACKAGE_MANAGER:$architecture" in
+    apt:arm64|apt:all|dnf:aarch64|dnf:noarch|pacman:aarch64|pacman:any) ;;
+    *) die "软件包 $name 的架构不匹配：$architecture" ;;
+  esac
+
+  PACKAGE_NAMES+=("$name")
+  PACKAGE_PATH["$name"]="$path"
+  PACKAGE_VERSION["$name"]="$version"
+}
+
+load_package_metadata() {
+  local package_file path name version architecture
+
+  for package_file in "${MANIFEST_FILES[@]}"; do
+    path="$PACKAGE_DIR/$package_file"
+    case "$PACKAGE_MANAGER" in
+      apt)
+        [[ "$package_file" == *.deb ]] || die "Ubuntu 归档包含非 DEB 文件：$package_file"
+        name="$(dpkg-deb -f "$path" Package)"
+        version="$(dpkg-deb -f "$path" Version)"
+        architecture="$(dpkg-deb -f "$path" Architecture)"
+        ;;
+      dnf)
+        [[ "$package_file" == *.rpm ]] || die "Fedora 归档包含非 RPM 文件：$package_file"
+        name="$(rpm -qp --queryformat '%{NAME}' "$path")"
+        version="$(rpm -qp --queryformat '%{VERSION}-%{RELEASE}' "$path")"
+        architecture="$(rpm -qp --queryformat '%{ARCH}' "$path")"
+        ;;
+      pacman)
+        [[ "$package_file" == *.pkg.tar.* && "$package_file" != *.sig ]] ||
+          die "Arch 归档包含非 pacman 包：$package_file"
+        name="$(bsdtar -xOf "$path" .PKGINFO | sed -n 's/^pkgname = //p')"
+        version="$(bsdtar -xOf "$path" .PKGINFO | sed -n 's/^pkgver = //p')"
+        architecture="$(bsdtar -xOf "$path" .PKGINFO | sed -n 's/^arch = //p')"
+        ;;
+    esac
+    [[ -n "$name" && -n "$version" && -n "$architecture" ]] ||
+      die "无法读取软件包元数据：$package_file"
+    register_package "$name" "$version" "$architecture" "$path"
+  done
+}
+
+package_is_installed() {
+  local name="$1"
+
+  case "$PACKAGE_MANAGER" in
+    apt)
+      [[ "$(dpkg-query -W -f='${db:Status-Abbrev}' "$name" 2>/dev/null || true)" == ii* ]]
+      ;;
+    dnf)
+      rpm -q "$name" >/dev/null 2>&1
+      ;;
+    pacman)
+      pacman -Qq "$name" >/dev/null 2>&1
+      ;;
+  esac
+}
+
+installed_package_version() {
+  local name="$1"
+
+  case "$PACKAGE_MANAGER" in
+    apt) dpkg-query -W -f='${Version}' "$name" ;;
+    dnf) rpm -q --queryformat '%{VERSION}-%{RELEASE}' "$name" ;;
+    pacman) pacman -Q "$name" | awk 'NR == 1 { print $2 }' ;;
+  esac
+}
+
+ensure_no_uncovered_mismatched_packages() {
+  local name version major
+
+  while IFS=$'\t' read -r name version; do
+    major="$(package_version_major "$version" || true)"
+    if [[ "$major" != "$SYSTEMD257_TARGET_MAJOR" ]] &&
+       [[ -z "${PACKAGE_PATH[$name]+present}" ]]; then
+      die "已安装的 $name ($version) 没有对应的 257 包，拒绝产生混合运行时"
+    fi
+  done < <(list_installed_family_packages)
+}
+
+add_selected_package() {
+  local name="$1"
+
+  [[ -n "${PACKAGE_PATH[$name]+present}" ]] || die "归档缺少核心软件包：$name"
+  if [[ -z "${SELECTED_SET[$name]+present}" ]]; then
+    SELECTED_SET["$name"]=1
+    SELECTED_NAMES+=("$name")
+    SELECTED_FILES+=("${PACKAGE_PATH[$name]}")
+  fi
+}
+
+select_packages() {
+  local name
+  local -a core_names=()
+
+  for name in "${PACKAGE_NAMES[@]}"; do
+    if [[ "$name" == systemd-standalone-* ]]; then
+      if package_is_installed "$name"; then
+        die "已安装冲突包 $name；完整 systemd 主包族无法与 standalone 包并存"
+      fi
+      continue
+    fi
+    if package_is_installed "$name"; then
+      add_selected_package "$name"
+    fi
+  done
+
+  case "$PACKAGE_MANAGER" in
+    apt)
+      core_names=(
+        libsystemd0 libsystemd-shared libudev1 libpam-systemd libnss-systemd
+        systemd udev systemd-sysv systemd-timesyncd systemd-resolved
+      )
+      ;;
+    dnf)
+      core_names=(
+        systemd systemd-libs systemd-shared systemd-pam systemd-udev
+        systemd-networkd systemd-resolved
+      )
+      ;;
+    pacman)
+      core_names=(systemd-libs systemd systemd-sysvcompat)
+      ;;
+  esac
+
+  for name in "${core_names[@]}"; do
+    add_selected_package "$name"
+  done
+
+  (( ${#SELECTED_FILES[@]} > 0 )) || die "没有选出可安装的软件包"
+  log "将安装 ${#SELECTED_FILES[@]} 个 257 包：${SELECTED_NAMES[*]}"
+}
+
+prepare_pacman_transaction_config() {
+  local output_file="$1"
+  local selected_packages
+
+  printf -v selected_packages '%s ' "${SELECTED_NAMES[@]}"
+  selected_packages="${selected_packages% }"
+
+  awk -v selected="$selected_packages" '
+    BEGIN {
+      count = split(selected, names, /[[:space:]]+/)
+      for (i = 1; i <= count; i++) remove[names[i]] = 1
+      remove["systemd*"] = 1
+    }
+    function write_filtered_ignore(line, equals, value, token_count, tokens, i, output) {
+      equals = index(line, "=")
+      value = substr(line, equals + 1)
+      token_count = split(value, tokens, /[[:space:]]+/)
+      output = ""
+      for (i = 1; i <= token_count; i++) {
+        if (tokens[i] != "" && !remove[tokens[i]]) {
+          output = output (output == "" ? "" : " ") tokens[i]
         }
-      ' | sort -u
-    )
-    if [ "${#systemd_packages[@]}" -gt 0 ]; then
-      apt-mark hold "${systemd_packages[@]}"
-    fi
-    ;;
-  dnf)
-    touch /etc/dnf/dnf.conf
-    if grep -q '^exclude=' /etc/dnf/dnf.conf; then
-      current_excludes="$(sed -n 's/^exclude=//p' /etc/dnf/dnf.conf | head -n1)"
-      case " $current_excludes " in
-        *' systemd* '*) ;;
-        *) sed -i '/^exclude=/{s/$/ systemd*/;}' /etc/dnf/dnf.conf ;;
-      esac
-    elif grep -q '^excludepkgs=' /etc/dnf/dnf.conf; then
-      current_excludes="$(sed -n 's/^excludepkgs=//p' /etc/dnf/dnf.conf | head -n1)"
-      case " $current_excludes " in
-        *' systemd* '*) ;;
-        *) sed -i '/^excludepkgs=/{s/$/ systemd*/;}' /etc/dnf/dnf.conf ;;
-      esac
-    else
-      printf '\n# systemd257: keep the old-kernel compatibility runtime\nexclude=systemd*\n' >> /etc/dnf/dnf.conf
-    fi
-    ;;
-  pacman)
-    if grep -q '^IgnorePkg[[:space:]]*=' /etc/pacman.conf; then
-      current_ignored="$(sed -n 's/^IgnorePkg[[:space:]]*=[[:space:]]*//p' /etc/pacman.conf | head -n1)"
-      for package in systemd systemd-libs systemd-sysvcompat; do
-        case " $current_ignored " in
-          *" $package "*) ;;
-          *)
-            sed -i "/^IgnorePkg[[:space:]]*=/{s/$/ $package/;}" /etc/pacman.conf
-            current_ignored="$current_ignored $package"
-            ;;
-        esac
-      done
-    else
-      printf '\n# systemd257: keep the old-kernel compatibility runtime\nIgnorePkg = systemd systemd-libs systemd-sysvcompat\n' >> /etc/pacman.conf
-    fi
-    ;;
-esac
+      }
+      if (output != "") print "IgnorePkg = " output
+    }
+    /^\[options\][[:space:]]*$/ {
+      in_options = 1
+      saw_options = 1
+      print
+      next
+    }
+    /^\[[^]]+\][[:space:]]*$/ {
+      if (in_options && !wrote_local_siglevel) {
+        print "LocalFileSigLevel = Optional"
+        wrote_local_siglevel = 1
+      }
+      in_options = 0
+      print
+      next
+    }
+    in_options && /^[[:space:]]*IgnorePkg[[:space:]]*=/ {
+      write_filtered_ignore($0)
+      next
+    }
+    in_options && /^[[:space:]]*LocalFileSigLevel[[:space:]]*=/ {
+      if (!wrote_local_siglevel) {
+        print "LocalFileSigLevel = Optional"
+        wrote_local_siglevel = 1
+      }
+      next
+    }
+    { print }
+    END {
+      if (in_options && !wrote_local_siglevel) {
+        print "LocalFileSigLevel = Optional"
+      }
+      if (!saw_options) exit 1
+    }
+  ' /etc/pacman.conf > "$output_file"
+}
 
-cat > /etc/droidspaces-systemd257 <<EOF
-previous_version=$CURRENT_VERSION_LINE
-installed_version=$INSTALLED_VERSION_LINE
+install_selected_packages() {
+  log "installing the complete systemd 257 runtime through $PACKAGE_MANAGER"
+
+  case "$PACKAGE_MANAGER" in
+    apt)
+      apt-get install -y --no-install-recommends --allow-downgrades \
+        --allow-change-held-packages --no-remove "${SELECTED_FILES[@]}"
+      apt-get check
+      ;;
+    dnf)
+      dnf install -y --allow-downgrade --disableexcludes=all \
+        --setopt=install_weak_deps=False "${SELECTED_FILES[@]}"
+      dnf check
+      ;;
+    pacman)
+      local transaction_config="$WORK_DIR/pacman.conf"
+      prepare_pacman_transaction_config "$transaction_config" ||
+        die "/etc/pacman.conf 缺少有效的 [options] 段"
+      pacman --config "$transaction_config" -U --noconfirm "${SELECTED_FILES[@]}"
+      pacman -Dk
+      ;;
+  esac
+}
+
+package_owner() {
+  local path="$1"
+  local result owner
+
+  case "$PACKAGE_MANAGER" in
+    apt)
+      result="$(dpkg-query -S "$path" 2>/dev/null | sed -n '1p' || true)"
+      owner="${result%%: *}"
+      owner="${owner%%:*}"
+      ;;
+    dnf)
+      owner="$(rpm -qf --queryformat '%{NAME}' "$path" 2>/dev/null || true)"
+      ;;
+    pacman)
+      owner="$(LC_ALL=C pacman -Qoq "$path" 2>/dev/null | sed -n '1p' || true)"
+      ;;
+  esac
+  printf '%s\n' "$owner"
+}
+
+verify_installed_family() {
+  local name expected actual major daemon="" ldd_output installed_version_line installed_major
+
+  MANAGED_NAMES=()
+  for name in "${PACKAGE_NAMES[@]}"; do
+    if package_is_installed "$name"; then
+      expected="${PACKAGE_VERSION[$name]}"
+      actual="$(installed_package_version "$name")"
+      [[ "$actual" == "$expected" ]] ||
+        die "检测到混合包版本：$name 已安装 $actual，归档要求 $expected"
+      MANAGED_NAMES+=("$name")
+    fi
+  done
+
+  while IFS=$'\t' read -r name actual; do
+    major="$(package_version_major "$actual" || true)"
+    [[ "$major" == "$SYSTEMD257_TARGET_MAJOR" ]] ||
+      die "安装后仍存在非 257 systemd 包族成员：$name $actual"
+  done < <(list_installed_family_packages)
+
+  for expected in /usr/lib/systemd/systemd /lib/systemd/systemd; do
+    if [[ -x "$expected" ]]; then
+      daemon="$expected"
+      break
+    fi
+  done
+  [[ -n "$daemon" ]] || die "安装后找不到 systemd PID 1"
+  [[ "$(package_owner "$daemon")" == systemd ]] ||
+    die "systemd PID 1 未登记到 systemd 主包：$daemon"
+
+  if command -v ldd >/dev/null 2>&1; then
+    ldd_output="$(ldd "$daemon" 2>&1 || true)"
+    if grep -q 'not found' <<< "$ldd_output"; then
+      printf '%s\n' "$ldd_output" >&2
+      die "systemd 257 PID 1 存在缺失的动态链接库"
+    fi
+  fi
+
+  installed_version_line="$(systemd_version_line || true)"
+  installed_major="$(systemd_major_from_line "$installed_version_line")"
+  [[ "$installed_major" == "$SYSTEMD257_TARGET_MAJOR" ]] ||
+    die "运行时版本验证失败：${installed_version_line:-unknown}"
+  CURRENT_VERSION_LINE="$installed_version_line"
+}
+
+configure_apt_holds() {
+  if (( ${#MANAGED_NAMES[@]} > 0 )); then
+    apt-mark hold "${MANAGED_NAMES[@]}"
+  fi
+}
+
+configure_dnf_holds() {
+  local dnf_config="/etc/dnf/dnf.conf"
+  local current_excludes
+
+  touch "$dnf_config"
+  if grep -q '^exclude=' "$dnf_config"; then
+    current_excludes="$(sed -n 's/^exclude=//p' "$dnf_config" | head -n1)"
+    case " $current_excludes " in
+      *' systemd* '*) ;;
+      *) sed -i '0,/^exclude=/{s/$/ systemd*/;}' "$dnf_config" ;;
+    esac
+  elif grep -q '^excludepkgs=' "$dnf_config"; then
+    current_excludes="$(sed -n 's/^excludepkgs=//p' "$dnf_config" | head -n1)"
+    case " $current_excludes " in
+      *' systemd* '*) ;;
+      *) sed -i '0,/^excludepkgs=/{s/$/ systemd*/;}' "$dnf_config" ;;
+    esac
+  else
+    printf '\n# systemd257: keep the package-family compatibility runtime\nexclude=systemd*\n' \
+      >> "$dnf_config"
+  fi
+}
+
+configure_pacman_holds() {
+  local name current_ignored packages_line
+
+  printf -v packages_line '%s ' "${MANAGED_NAMES[@]}"
+  packages_line="${packages_line% }"
+  [[ -n "$packages_line" ]] || return 0
+
+  if grep -q '^[[:space:]]*IgnorePkg[[:space:]]*=' /etc/pacman.conf; then
+    current_ignored="$(
+      sed -n 's/^[[:space:]]*IgnorePkg[[:space:]]*=[[:space:]]*//p' /etc/pacman.conf | head -n1
+    )"
+    for name in "${MANAGED_NAMES[@]}"; do
+      case " $current_ignored " in
+        *" $name "*) ;;
+        *)
+          sed -i "/^[[:space:]]*IgnorePkg[[:space:]]*=/{s/$/ $name/;}" /etc/pacman.conf
+          current_ignored="$current_ignored $name"
+          ;;
+      esac
+    done
+  else
+    grep -q '^\[options\][[:space:]]*$' /etc/pacman.conf ||
+      die "/etc/pacman.conf 缺少 [options] 段，无法锁定 257 包族"
+    sed -i "/^\[options\][[:space:]]*$/a IgnorePkg = $packages_line" /etc/pacman.conf
+  fi
+}
+
+configure_package_holds() {
+  case "$PACKAGE_MANAGER" in
+    apt) configure_apt_holds ;;
+    dnf) configure_dnf_holds ;;
+    pacman) configure_pacman_holds ;;
+  esac
+}
+
+write_state_file() {
+  local state_temp="$WORK_DIR/droidspaces-systemd257"
+  local managed_packages_csv main_version
+
+  printf -v managed_packages_csv '%s,' "${MANAGED_NAMES[@]}"
+  managed_packages_csv="${managed_packages_csv%,}"
+  main_version="${PACKAGE_VERSION[systemd]}"
+
+  cat > "$state_temp" <<EOF
+previous_version=$PREVIOUS_VERSION_LINE
+installed_version=$CURRENT_VERSION_LINE
 source_version=$SOURCE_VERSION
-source_ref=$SYSTEMD257_REF
-source_commit=$SOURCE_COMMIT
+source_ref=v$SOURCE_VERSION
+source_commit=not-recorded
 package_manager=$PACKAGE_MANAGER
+managed_package=systemd
+managed_package_version=$main_version
+install_mode=package-family
+release_repository=$RELEASE_REPOSITORY
+release_tag=$RELEASE_TAG
+release_asset=$ARCHIVE_NAME
+archive_sha256=$EXPECTED_ARCHIVE_SHA256
+package_repository_commit=$PACKAGE_REPOSITORY_COMMIT
+packaging_source=$PACKAGING_SOURCE
+managed_packages=$managed_packages_csv
 EOF
+  install -m 0644 "$state_temp" "$SYSTEMD257_STATE"
+}
 
-log "done: $INSTALLED_VERSION_LINE"
+main() {
+  local current_major
+
+  require_root
+  CURRENT_VERSION_LINE="$(systemd_version_line || true)"
+  [[ -n "$CURRENT_VERSION_LINE" ]] || die "无法检测当前 systemd 版本"
+  current_major="$(systemd_major_from_line "$CURRENT_VERSION_LINE")"
+  [[ "$current_major" =~ ^[0-9]+$ ]] ||
+    die "无法从版本信息中提取主版本：$CURRENT_VERSION_LINE"
+  readonly PREVIOUS_VERSION_LINE="$CURRENT_VERSION_LINE"
+
+  log "current version: $CURRENT_VERSION_LINE"
+  if (( current_major < SYSTEMD257_TARGET_MAJOR )); then
+    log "systemd $current_major 低于 257，不执行安装"
+    return 0
+  fi
+
+  if ! detect_target; then
+    if (( current_major == SYSTEMD257_TARGET_MAJOR )); then
+      log "当前发行版已经运行 systemd 257，不需要预构建包族"
+      return 0
+    fi
+    die "当前发行版没有预构建 257 包族；仅支持 Ubuntu 26.04、Fedora 43/44 和 Arch Linux ARM"
+  fi
+
+  verify_target_tools_and_architecture
+  if (( current_major == SYSTEMD257_TARGET_MAJOR )) && ! has_mismatched_family_packages; then
+    log "运行时和已安装 systemd 包族均为 257，不需要重复安装"
+    return 0
+  fi
+
+  resolve_archive_checksum
+  WORK_DIR="$(mktemp -d -t systemd257.XXXXXXXX)"
+  download_archive
+  extract_and_verify_archive
+  load_package_metadata
+  ensure_no_uncovered_mismatched_packages
+  select_packages
+  install_selected_packages
+  verify_installed_family
+  configure_package_holds
+  write_state_file
+
+  log "done: $CURRENT_VERSION_LINE (${#MANAGED_NAMES[@]} packages managed by $PACKAGE_MANAGER)"
+}
+
+if [[ "${BASH_SOURCE[0]}" == "$0" ]]; then
+  main "$@"
+fi
