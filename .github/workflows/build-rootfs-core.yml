@@ -79,6 +79,8 @@ jobs:
     steps:
       - name: Checkout repository
         uses: actions/checkout@v5
+        with:
+          ref: ${{ github.sha }}
 
       - name: Parse user build choices
         id: find-templates
@@ -196,7 +198,7 @@ jobs:
       - name: Checkout repository
         uses: actions/checkout@v5
         with:
-          ref: ${{ github.ref_name }}
+          ref: ${{ github.sha }}
 
       - name: Build RootFS (${{ matrix.template }})
         env:
@@ -245,6 +247,8 @@ jobs:
     steps:
       - name: Checkout repository
         uses: actions/checkout@v5
+        with:
+          ref: ${{ github.sha }}
 
       - name: Download all artifacts
         uses: actions/download-artifact@v7
@@ -257,10 +261,12 @@ jobs:
           mkdir -p release_assets
           mv *.tar.xz release_assets/
 
-      - name: Create unified Release
+      - name: Stage draft Release and upload assets
+        id: stage-release
         uses: softprops/action-gh-release@v3
         with:
           tag_name: ${{ needs.setup.outputs.build_id }}
+          target_commitish: ${{ github.sha }}
           name: "Droidspaces RootFS ${{ needs.setup.outputs.build_id }}"
           files: "release_assets/*"
           body: |
@@ -290,7 +296,26 @@ jobs:
             - Compression Tools Integration: ${{ inputs.enable_zip }}
             - Docker Integration: ${{ inputs.enable_docker }}
 
-          draft: false
+          draft: true
           prerelease: false
         env:
           GITHUB_TOKEN: ${{ github.token }}
+
+      - name: Publish staged Release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RELEASE_ID: ${{ steps.stage-release.outputs.id }}
+          REPOSITORY: ${{ github.repository }}
+        run: |
+          set -euo pipefail
+          case "$RELEASE_ID" in
+            ''|*[!0-9]*)
+              echo "Release action did not return a valid draft Release ID." >&2
+              exit 1
+              ;;
+          esac
+          gh api \
+            --method PATCH \
+            "repos/$REPOSITORY/releases/$RELEASE_ID" \
+            -F draft=false \
+            --silent

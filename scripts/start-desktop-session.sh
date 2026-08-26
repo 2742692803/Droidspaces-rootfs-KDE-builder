@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-config="${DROIDSPACES_DESKTOP_CONFIG:-/etc/droidspaces/desktop.conf}"
+config="${DROIDSPACES_DESKTOP_CONFIG:-/etc/droidspaces-desktop.conf}"
 [[ -r "$config" ]] || { echo "Desktop configuration is missing: $config" >&2; exit 1; }
 source "$config"
 

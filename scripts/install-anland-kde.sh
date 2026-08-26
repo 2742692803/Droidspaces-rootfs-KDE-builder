@@ -976,14 +976,35 @@ configure_dnf_excludes() {
 }
 
 install_rpm_packages() {
-    local -a files packages dnf_install_options=()
+    local -a files packages dnf_install_options=('--allow-downgrade')
+    local -A expected_nevra_by_package=()
     local dnf_conf="/etc/dnf/dnf.conf"
     local dnf_backup
+    local file package expected_nevra actual_nevra
+    local verification_failed=false
 
     command -v dnf >/dev/null 2>&1 || die "未找到 dnf。" "dnf was not found."
     command -v rpm >/dev/null 2>&1 || die "未找到 rpm。" "rpm was not found."
     mapfile -t files < <(find "$PACKAGE_DIR" -maxdepth 1 -type f -name '*.rpm' -print | sort)
     ((${#files[@]} > 0)) || die "没有可安装的 rpm 包。" "No installable rpm packages were found."
+
+    for file in "${files[@]}"; do
+        package="$(rpm -qp --queryformat '%{NAME}' "$file")" || die \
+            "无法读取 rpm 包名：${file##*/}。" \
+            "Could not read the RPM package name: ${file##*/}."
+        expected_nevra="$(rpm -qp --queryformat '%{NAME}-%{EPOCHNUM}:%{VERSION}-%{RELEASE}.%{ARCH}' "$file")" || die \
+            "无法读取 rpm NEVRA：${file##*/}。" \
+            "Could not read the RPM NEVRA: ${file##*/}."
+        [[ -n "$package" && -n "$expected_nevra" ]] || die \
+            "rpm 元数据不完整：${file##*/}。" \
+            "The RPM metadata is incomplete: ${file##*/}."
+        [[ -z "${expected_nevra_by_package[$package]+present}" ]] || die \
+            "下载包包含重复的 rpm 包名：${package}。" \
+            "The archive contains a duplicate RPM package name: ${package}."
+        expected_nevra_by_package["$package"]="$expected_nevra"
+        packages+=("$package")
+    done
+    mapfile -t packages < <(printf '%s\n' "${packages[@]}" | sort -u)
 
     log "正在安装 ${#files[@]} 个 rpm 包并自动处理依赖..." \
         "Installing ${#files[@]} rpm packages and resolving dependencies..."
@@ -1007,8 +1028,25 @@ install_rpm_packages() {
         die "无法恢复 DNF 锁定配置。" "Unable to restore the DNF hold configuration."
     fi
 
-    mapfile -t packages < <(rpm -qp --queryformat '%{NAME}\n' "${files[@]}" | sort -u)
-    ((${#packages[@]} > 0)) || die "无法读取 rpm 包名。" "Could not determine the rpm package names."
+    for package in "${packages[@]}"; do
+        if ! actual_nevra="$(rpm -q --queryformat '%{NAME}-%{EPOCHNUM}:%{VERSION}-%{RELEASE}.%{ARCH}\n' "$package" 2>/dev/null)"; then
+            log "安装后找不到 rpm 包：${package}。" \
+                "The RPM package is missing after installation: ${package}."
+            verification_failed=true
+            continue
+        fi
+        if [[ "$actual_nevra" != "${expected_nevra_by_package[$package]}" ]]; then
+            log "rpm 版本不匹配：${package}，需要 ${expected_nevra_by_package[$package]}，实际为 ${actual_nevra//$'\n'/, }。" \
+                "RPM version mismatch for ${package}: expected ${expected_nevra_by_package[$package]}, got ${actual_nevra//$'\n'/, }."
+            verification_failed=true
+        fi
+    done
+    if [[ "$verification_failed" == true ]]; then
+        rm -f -- "$dnf_backup"
+        die "rpm 安装结果未通过 NEVRA 校验，未写入软件包锁定。" \
+            "The RPM transaction failed NEVRA verification; package holds were not written."
+    fi
+
     log "正在设置 DNF exclude（等效于 hold）..." "Applying DNF excludes (equivalent to hold)..."
     if ! configure_dnf_excludes; then
         install -m 0644 "$dnf_backup" "$dnf_conf" || true

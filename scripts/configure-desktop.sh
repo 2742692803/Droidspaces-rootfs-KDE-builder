@@ -7,6 +7,8 @@ autostart="${3:-}"
 username="${4:-}"
 rootfs="${ROOTFS_DIR:-}"
 templates="${START_TEMPLATES_DIR:-/tmp/droidspaces-start}"
+# Droidspaces importers require /etc/droidspaces to remain a regular marker file.
+config="$rootfs/etc/droidspaces-desktop.conf"
 
 [[ "$desktop" =~ ^(none|[a-z][a-z0-9-]*)$ ]] || { echo "Invalid desktop: $desktop" >&2; exit 1; }
 case "$backend" in x11|anland-wayland) ;; *) echo "Invalid display backend: $backend" >&2; exit 1 ;; esac
@@ -22,12 +24,11 @@ if [[ "$desktop" == kde-mobile && "$backend" != anland-wayland ]]; then
     exit 1
 fi
 
-install -d -m 0755 "$rootfs/etc/droidspaces"
-cat > "$rootfs/etc/droidspaces/desktop.conf" <<EOF
+cat > "$config" <<EOF
 DESKTOP=$desktop
 DISPLAY_BACKEND=$backend
 EOF
-chmod 0644 "$rootfs/etc/droidspaces/desktop.conf"
+chmod 0644 "$config"
 
 if [[ "$desktop" == kde ]]; then
     install -d -m 0755 "$rootfs/home/$username/.config"
