@@ -656,10 +656,12 @@ prepare_pacman_transaction_config() {
 install_selected_packages() {
   local dnf_before="$WORK_DIR/dnf-packages.before"
   local dnf_after="$WORK_DIR/dnf-packages.after"
-  local -a dnf_options=(
-    --allow-downgrade
-    --disableexcludes=all
+  local -a dnf_global_options=(
+    --setopt=excludepkgs=
     --setopt=install_weak_deps=False
+  )
+  local -a dnf_install_options=(
+    --allow-downgrade
   )
 
   log "installing the complete systemd 257 runtime through $PACKAGE_MANAGER"
@@ -675,9 +677,10 @@ install_selected_packages() {
     dnf)
       snapshot_dnf_package_names "$dnf_before"
       if (( ${#DNF_REPLACEMENT_NAMES[@]} > 0 )); then
-        dnf_options+=(--allowerasing)
+        dnf_install_options+=(--allowerasing)
       fi
-      dnf install -y "${dnf_options[@]}" "${SELECTED_FILES[@]}"
+      dnf "${dnf_global_options[@]}" install -y \
+        "${dnf_install_options[@]}" "${SELECTED_FILES[@]}"
       snapshot_dnf_package_names "$dnf_after"
       verify_controlled_dnf_removals "$dnf_before" "$dnf_after"
       dnf check
