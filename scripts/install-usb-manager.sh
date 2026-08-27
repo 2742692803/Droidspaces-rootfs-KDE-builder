@@ -4,6 +4,7 @@ set -euo pipefail
 readonly UPSTREAM_ARCHIVE_URL="https://github.com/Yizhou147/Droidspaces-USB-Manager/archive/refs/heads/main.tar.gz"
 readonly INSTALL_DIR="/usr/share/usb-manager"
 readonly SUDOERS_FILE="/etc/sudoers.d/droidspaces-usb-manager"
+readonly SYSTEMD257_STATE="/etc/droidspaces-systemd257"
 
 SCRIPT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" 2>/dev/null && pwd -P || true)"
 WORK_DIR=""
@@ -157,6 +158,26 @@ resolve_target_user() {
         "USB management permissions will be configured for ${TARGET_USER}."
 }
 
+install_pacman_dependencies() {
+    local state_file="${1:-$SYSTEMD257_STATE}"
+    local -a packages=(
+        python python-pyqt5 qt5-wayland qt5-svg util-linux sudo
+        android-tools ntfs-3g exfatprogs desktop-file-utils gvfs gvfs-mtp kio-extras
+        xdg-utils ca-certificates curl wget tar
+    )
+
+    if [[ -f "$state_file" ]]; then
+        log "检测到 systemd 257 兼容状态；保留 Pacman IgnorePkg，且不显式请求 systemd。" \
+            "Detected the systemd 257 compatibility state; preserving Pacman IgnorePkg without explicitly requesting systemd."
+    else
+        # A regular Arch installation includes systemd. Keep it explicit for
+        # minimal/non-Droidspaces installations that have not been downgraded.
+        packages+=(systemd)
+    fi
+
+    pacman -Syu --noconfirm --needed "${packages[@]}"
+}
+
 install_dependencies() {
     log "正在安装图形界面、USB、ADB 和文件系统依赖..." \
         "Installing GUI, USB, ADB, and filesystem dependencies..."
@@ -177,10 +198,7 @@ install_dependencies() {
                 xdg-utils ca-certificates curl wget tar
             ;;
         pacman)
-            pacman -Syu --noconfirm --needed \
-                python python-pyqt5 qt5-wayland qt5-svg systemd util-linux sudo \
-                android-tools ntfs-3g exfatprogs desktop-file-utils gvfs gvfs-mtp kio-extras \
-                xdg-utils ca-certificates curl wget tar
+            install_pacman_dependencies
             ;;
     esac
 }
@@ -416,4 +434,6 @@ main() {
         "Hardware access must be enabled when importing the Droidspaces container."
 }
 
-main "$@"
+if [[ "${BASH_SOURCE[0]}" == "$0" ]]; then
+    main "$@"
+fi

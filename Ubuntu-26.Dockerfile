@@ -149,7 +149,7 @@ RUN sed -i '/en_US.UTF-8/s/^# //' /etc/locale.gen && \
     sed -i 's/#PermitRootLogin prohibit-password/PermitRootLogin no/' /etc/ssh/sshd_config && \
     sed -i 's/#PasswordAuthentication yes/PasswordAuthentication yes/' /etc/ssh/sshd_config && \
     # Ubuntu 默认用户是 ubuntu，删除它避免冲突
-    deluser --remove-home ubuntu || true && \
+    (deluser --remove-home ubuntu || true) && \
     # 创建自定义用户并直接加入 shadow 组，确保锁屏验证权限
     useradd -m -s /bin/bash -G shadow ${USERNAME} && echo "${USERNAME}:1234" | chpasswd && \
     systemctl enable ssh

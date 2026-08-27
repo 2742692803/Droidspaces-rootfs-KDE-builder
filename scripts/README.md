@@ -23,7 +23,7 @@
 
 ## Mesa 安装器
 
-`install-mesa.sh` 从 `lfdevs/mesa-for-android-container` 的最新 GitHub Release 选择当前发行版对应的 ARM64 Mesa 资产，并从 `Re-s/droidspaces-media-decode` 的最新稳定 Release 安装 `msm_drm_drv_video.so`。支持 Debian 13、Ubuntu 24.04/25.10/26.04、Fedora 43/44 和 Arch Linux；所有系统都将媒体解码驱动安装到 `/usr/lib/aarch64-linux-gnu/dri/msm_drm_drv_video.so`。
+`install-mesa.sh` 从 `lfdevs/mesa-for-android-container` 的最新 GitHub Release 选择当前发行版对应的 ARM64 Mesa 资产，并从 `Re-s/droidspaces-media-decode` 的最新稳定 Release 安装 `msm_drm_drv_video.so`。支持 Debian 13、Ubuntu 24.04/25.10/26.04、Fedora 43/44 和 Arch Linux。媒体解码驱动按发行版安装到 libva 的默认驱动目录：Debian/Ubuntu 为 `/usr/lib/aarch64-linux-gnu/dri`，Fedora 为 `/usr/lib64/dri`，Arch Linux 为 `/usr/lib/dri`。
 
 安装器会严格检查 Release tag、资产名和官方下载地址。使用镜像源时，Mesa 归档会根据 GitHub Release API 公布的 SHA-256 digest 校验；媒体解码驱动在所有下载源下都会校验 Release API digest、上游 `SHA256SUMS` 及资产大小。下载支持断点续传，临时文件在退出时自动清理。
 
@@ -92,6 +92,8 @@ sudo ./scripts/install-usb-manager.sh --user "$USER"
 ```
 
 `--user USER` 指定获得 USB 管理权限和桌面入口的用户。省略时依次尝试 `SUDO_USER`、当前登录用户和第一个普通用户。开发或离线测试可以通过 `--source DIR` 使用本地 Droidspaces-USB-Manager 源码目录；运行 `--help` 查看完整参数。
+
+在普通 Arch 系统上，安装器会照常安装 `systemd` 和其他依赖。若检测到 `/etc/droidspaces-systemd257`，重复运行时会保留 Pacman 的 `IgnorePkg` 锁定，不再把 `systemd` 作为显式安装目标；PyQt5、ADB、NTFS、exFAT 等 USB Manager 依赖仍会正常补齐。
 
 RootFS 导入 Droidspaces 时必须开启硬件访问，否则容器无法看到 `/sys/bus/usb` 和 `/sys/bus/scsi`。
 

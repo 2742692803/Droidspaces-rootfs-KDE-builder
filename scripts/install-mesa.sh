@@ -10,8 +10,6 @@ readonly MEDIA_DECODE_REPOSITORY="Re-s/droidspaces-media-decode"
 readonly MEDIA_DECODE_API_URL="https://api.github.com/repos/${MEDIA_DECODE_REPOSITORY}/releases/latest"
 readonly MEDIA_DRIVER_NAME="msm_drm_drv_video.so"
 readonly MEDIA_CHECKSUMS_NAME="SHA256SUMS"
-readonly MEDIA_DRIVER_INSTALL_DIR="/usr/lib/aarch64-linux-gnu/dri"
-readonly MEDIA_DRIVER_INSTALL_PATH="${MEDIA_DRIVER_INSTALL_DIR}/${MEDIA_DRIVER_NAME}"
 readonly SOURCE_PROBE_TIMEOUT_SECONDS=2
 readonly GITHUB_RELEASE_URL="https://github.com"
 readonly GH_PROXY_RELEASE_URL="https://gh-proxy.com/https://github.com"
@@ -52,6 +50,8 @@ MEDIA_CHECKSUMS_RELEASE_DIGEST=""
 MEDIA_DRIVER_FILE=""
 MEDIA_CHECKSUMS_FILE=""
 MEDIA_DRIVER_TEMP_FILE=""
+MEDIA_DRIVER_INSTALL_DIR=""
+MEDIA_DRIVER_INSTALL_PATH=""
 MESA_PACKAGE_NAMES=()
 
 detect_language() {
@@ -155,6 +155,15 @@ require_root() {
     exec sudo --preserve-env=LANG,LC_ALL,LC_MESSAGES -- bash "$script_path" "$@"
 }
 
+media_driver_install_dir_for_target() {
+    case "$1" in
+        debian|ubuntu) printf '/usr/lib/aarch64-linux-gnu/dri' ;;
+        fedora) printf '/usr/lib64/dri' ;;
+        arch|archarm|archlinux) printf '/usr/lib/dri' ;;
+        *) return 1 ;;
+    esac
+}
+
 detect_target() {
     [[ -r /etc/os-release ]] || die \
         "无法读取 /etc/os-release。" "Unable to read /etc/os-release."
@@ -244,6 +253,11 @@ detect_target() {
             die "不支持当前系统 ${system_name}。" "Unsupported system: ${system_name}."
             ;;
     esac
+
+    MEDIA_DRIVER_INSTALL_DIR="$(media_driver_install_dir_for_target "$distro_id")" || die \
+        "内部错误：无法确定 ${system_name} 的媒体解码驱动目录。" \
+        "Internal error: could not determine the media decode driver directory for ${system_name}."
+    MEDIA_DRIVER_INSTALL_PATH="${MEDIA_DRIVER_INSTALL_DIR}/${MEDIA_DRIVER_NAME}"
 
     log "已识别系统: ${system_name} -> ${TARGET}" \
         "Detected system: ${system_name} -> ${TARGET}"
@@ -1175,4 +1189,6 @@ main() {
         "Mesa and media decode driver installation completed; related packages are now held."
 }
 
-main "$@"
+if [[ "${BASH_SOURCE[0]}" == "$0" ]]; then
+    main "$@"
+fi

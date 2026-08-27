@@ -23,7 +23,7 @@ This directory contains installers used while building the RootFS, maintenance t
 
 ## Mesa Installer
 
-`install-mesa.sh` selects the ARM64 Mesa asset for the current distribution from the latest `lfdevs/mesa-for-android-container` GitHub Release, then installs `msm_drm_drv_video.so` from the latest stable `Re-s/droidspaces-media-decode` Release. It supports Debian 13, Ubuntu 24.04/25.10/26.04, Fedora 43/44, and Arch Linux. Every target installs the media decode driver at `/usr/lib/aarch64-linux-gnu/dri/msm_drm_drv_video.so`.
+`install-mesa.sh` selects the ARM64 Mesa asset for the current distribution from the latest `lfdevs/mesa-for-android-container` GitHub Release, then installs `msm_drm_drv_video.so` from the latest stable `Re-s/droidspaces-media-decode` Release. It supports Debian 13, Ubuntu 24.04/25.10/26.04, Fedora 43/44, and Arch Linux. The media decode driver is installed in each distribution's default libva driver directory: `/usr/lib/aarch64-linux-gnu/dri` on Debian/Ubuntu, `/usr/lib64/dri` on Fedora, and `/usr/lib/dri` on Arch Linux.
 
 The installer strictly validates Release tags, asset names, and official download URLs. Mirror downloads of the Mesa archive are verified against the SHA-256 digest published by the GitHub Release API. For every source, the media decode driver is checked against the Release API digest, upstream `SHA256SUMS`, and the published asset size. Downloads can resume, and temporary files are removed on exit.
 
@@ -92,6 +92,8 @@ sudo ./scripts/install-usb-manager.sh --user "$USER"
 ```
 
 `--user USER` selects the user that receives USB management permissions and desktop launchers. When omitted, the installer tries `SUDO_USER`, the logged-in user, and then the first regular user. Development and offline tests can use a local Droidspaces-USB-Manager checkout through `--source DIR`; run `--help` for all options.
+
+On a regular Arch system, the installer continues to install `systemd` and the remaining dependencies normally. When `/etc/droidspaces-systemd257` exists, a repeated installation preserves Pacman's `IgnorePkg` lock and no longer names `systemd` as an explicit install target; the PyQt5, ADB, NTFS, exFAT, and other USB Manager dependencies are still installed as needed.
 
 Hardware access must be enabled when importing the RootFS into Droidspaces, or `/sys/bus/usb` and `/sys/bus/scsi` will not be visible inside the container.
 
