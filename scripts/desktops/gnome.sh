@@ -40,7 +40,8 @@ install_apt() {
         gnome-terminal nautilus gnome-system-monitor gnome-tweaks
         gnome-keyring libpam-gnome-keyring polkitd upower
         pipewire pipewire-pulse wireplumber pulseaudio-utils
-        mesa-utils vulkan-tools wayland-utils xwayland xdg-user-dirs xdg-desktop-portal-gnome
+        mesa-utils vulkan-tools aha clinfo dmidecode glmark2 vkmark
+        wayland-utils xwayland xdg-user-dirs xdg-desktop-portal-gnome
         file-roller evince eog gstreamer1.0-plugins-base gstreamer1.0-plugins-good
         libcanberra-pulse sound-theme-freedesktop
     )
@@ -49,9 +50,15 @@ install_apt() {
         /etc/dpkg/dpkg.cfg.d/excludes 2>/dev/null || true
 
     case "$ID:$VERSION_ID" in
-        debian:13) ;;
+        debian:13)
+            packages+=(desktop-base)
+            ;;
         ubuntu:26.04)
-            packages+=(language-pack-gnome-zh-hans language-pack-zh-hans)
+            packages+=(
+                ubuntu-settings ubuntu-wallpapers
+                yaru-theme-gnome-shell yaru-theme-gtk yaru-theme-icon yaru-theme-sound
+                language-pack-gnome-zh-hans language-pack-zh-hans
+            )
             ;;
         *)
             echo "GNOME 不支持当前系统：$ID $VERSION_ID" >&2
