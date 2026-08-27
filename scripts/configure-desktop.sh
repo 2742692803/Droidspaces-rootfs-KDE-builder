@@ -23,6 +23,10 @@ if [[ "$desktop" == kde-mobile && "$backend" != anland-wayland ]]; then
     echo "不支持的桌面与显示后端组合：$desktop/$backend" >&2
     exit 1
 fi
+if [[ "$desktop" == gnome && "$backend" != anland-wayland ]]; then
+    echo "不支持的桌面与显示后端组合：$desktop/$backend" >&2
+    exit 1
+fi
 
 cat > "$config" <<EOF
 DESKTOP=$desktop

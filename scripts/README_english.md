@@ -13,6 +13,9 @@ This directory contains installers used while building the RootFS, maintenance t
 | `start-desktop-session.sh` | Linux container | Starts the selected session from `/etc/droidspaces-desktop.conf`. |
 | `install-mesa.sh` | ARM64 Linux container | Installs the latest Android-container Mesa build and MediaCodec VA-API driver, then locks Mesa packages. |
 | `install-anland-kde.sh` | ARM64 Linux container | Installs Anland patched KWin/Xwayland Release packages and locks them. |
+| `install-anland-gnome.sh` | ARM64 Debian/Ubuntu container | Installs Anland patched Mutter/Xwayland Release packages and locks them. |
+| `install-anland-desktop.sh` | RootFS build environment | Dispatches a desktop slug to the KDE or GNOME Anland installer. |
+| `lib/anland-build.sh` | RootFS build host | Resolves the Anland package family, Release tag, and revision for native/QEMU builds. |
 | `install-usb-manager.sh` | Linux container | Installs Droidspaces USB Manager, distribution dependencies, launchers, and user permissions. |
 | `systemd257.sh` | RootFS build environment | Installs a complete package-manager-owned systemd 257 family when required by an old Android kernel. |
 | `download-firmware` | Debian/Ubuntu container | Installs `linux-firmware` and decompresses its `.zst` firmware. |
@@ -51,7 +54,7 @@ After installation, persistent package locks are written for each distribution:
 | Fedora | Installer-managed `exclude` block in `/etc/dnf/dnf.conf` |
 | Arch | Installer-managed `IgnorePkg` block in `/etc/pacman.conf` |
 
-The lock list is generated only from Mesa packages present in the archive. KWin and Xwayland are locked exclusively by `install-anland-kde.sh`. Managed configuration is idempotent, and unrelated existing configuration is preserved.
+The lock list is generated only from Mesa packages present in the archive. KWin/Xwayland and Mutter/Xwayland are held separately by `install-anland-kde.sh` and `install-anland-gnome.sh`. Managed configuration is idempotent, and unrelated existing configuration is preserved.
 
 ## Adding a Desktop Profile
 
@@ -62,7 +65,7 @@ Desktop names, target capabilities, and backend compatibility live in `lib/deskt
 3. Map its session command in `start-desktop-session.sh`; `install-desktop.sh` automatically discovers executable profiles for valid slugs.
 4. Add its display label to the `desktop` choice in both workflow entry files.
 
-All seven Dockerfiles and the reusable workflow already use the generic profile interface, so an ordinary X11 desktop does not require copied Dockerfiles. Register a profile in `desktop_uses_anland_kde_packages` only when it truly requires patched KWin/Xwayland.
+All seven Dockerfiles and the reusable workflow already use the generic profile interface, so an ordinary X11 desktop does not require copied Dockerfiles. Profiles that require patched Wayland packages must also map to a package family in `lib/anland-build.sh` through `anland_package_family`.
 
 ## Anland KDE Installer
 
@@ -77,11 +80,26 @@ It also accepts `--1`, `--2`, or `--3` for GitHub, `gh-proxy.com`, or `ghproxy.n
 To install packages published by a public fork, override only the repository. The fork must provide the fixed `anland-kde-packages` tag:
 
 ```bash
-sudo ANLAND_KDE_RELEASE_REPOSITORY=owner/repository \
+sudo ANLAND_RELEASE_REPOSITORY=owner/repository \
   ./scripts/install-anland-kde.sh --1
 ```
 
 The Anland host module, app, SELinux policy, bind mount, and Droidspaces permissions must still be configured as described in the [project Wayland and Anland setup](../README_english.md#wayland-and-anland-setup).
+
+## Anland GNOME Installer
+
+`install-anland-gnome.sh` reads `anland-gnome-manifest` from the fixed `anland-gnome-packages` rolling Release and installs patched Mutter/Xwayland runtime packages for Debian 13 or Ubuntu 26.04 on ARM64, skipping test and development packages in the archive. Its source selection, mirror digest checks, and arguments match the KDE installer; APT holds prevent upgrades from replacing the result.
+
+```bash
+sudo ./scripts/install-anland-gnome.sh
+```
+
+Override the GNOME repository variable when using packages from a public fork:
+
+```bash
+sudo ANLAND_RELEASE_REPOSITORY=owner/repository \
+  ./scripts/install-anland-gnome.sh --1
+```
 
 ## USB Manager Installer
 
@@ -131,6 +149,7 @@ After changing a shell script, run at least a syntax check. Use ShellCheck when 
 ```bash
 bash -n scripts/install-mesa.sh
 bash -n scripts/install-anland-kde.sh
+bash -n scripts/install-anland-gnome.sh
 bash -n scripts/install-usb-manager.sh
 shellcheck scripts/install-mesa.sh
 ```

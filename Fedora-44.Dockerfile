@@ -1,4 +1,3 @@
-ARG TARGETPLATFORM
 FROM fedora:44 AS customizer
 
 #######################################################
@@ -15,13 +14,11 @@ ARG ENABLE_docker_ARG
 ARG ENABLE_srf_ARG
 ARG ENABLE_tmoe_ARG
 ARG DISPLAY_BACKEND
-ARG INSTALL_ANLAND_KDE_PACKAGES
 ARG ENABLE_8gen2_wayland_ARG
 ARG ENABLE_systemd257_ARG
 ARG USERNAME
-ARG ANLAND_KDE_RELEASE_REPOSITORY=Goldzxcbug/droidspaces-package
-ARG ANLAND_KDE_RELEASE_TAG
-ARG ANLAND_KDE_PACKAGE_REVISION=unknown
+ARG ANLAND_RELEASE_REPOSITORY=Goldzxcbug/droidspaces-package
+ARG ANLAND_PACKAGE_REVISION=unknown
 ######################################################
 
 ENV DEBIAN_FRONTEND=noninteractive
@@ -41,7 +38,7 @@ RUN echo "max_parallel_downloads=10" >> /etc/dnf/dnf.conf && \
     echo "fastestmirror=True" >> /etc/dnf/dnf.conf && \
     echo "defaultyes=True" >> /etc/dnf/dnf.conf
 
-RUN chmod +x /usr/local/sbin/install-anland-kde /usr/local/sbin/install-mesa /usr/local/sbin/install-desktop /usr/local/sbin/configure-desktop /usr/local/bin/start-desktop-session /usr/local/lib/droidspaces/desktops/*.sh && \
+RUN chmod +x /usr/local/sbin/install-anland-* /usr/local/sbin/install-mesa /usr/local/sbin/install-desktop /usr/local/sbin/configure-desktop /usr/local/bin/start-desktop-session /usr/local/lib/droidspaces/desktops/*.sh && \
     dnf install -y --setopt=install_weak_deps=False \
     # 核心工具组件
     bash jq dialog coreutils file findutils grep sed gawk curl wget ca-certificates bash-completion systemd-udev dbus-daemon systemd systemd-pam systemd-resolved fastfetch \
@@ -86,18 +83,12 @@ RUN chmod +x /usr/local/sbin/install-anland-kde /usr/local/sbin/install-mesa /us
     dnf clean all && \
     rm -rf /var/cache/dnf
 
-############################################## anland_kde(wayland) 支持 ################################################
-RUN if [ "$INSTALL_ANLAND_KDE_PACKAGES" = "true" ]; then \
-        if [ -z "$ANLAND_KDE_RELEASE_TAG" ]; then \
-            echo "错误：Docker 构建必须传入固定的 ANLAND_KDE_RELEASE_TAG。" >&2; \
-            exit 1; \
-        fi && \
-        echo "--> [开启] 正在安装 anland_kde..." && \
-        echo "--> [开启] 从固定滚动 Release 下载预编译包 (${ANLAND_KDE_PACKAGE_REVISION})..." && \
-        ANLAND_KDE_RELEASE_REPOSITORY="$ANLAND_KDE_RELEASE_REPOSITORY" \
-        ANLAND_KDE_RELEASE_TAG="$ANLAND_KDE_RELEASE_TAG" \
+############################################## Anland Wayland 支持 ################################################
+RUN if [ "$DISPLAY_BACKEND" = "anland-wayland" ]; then \
+        echo "--> [开启] 正在安装 $DESKTOP 的 Anland 包 (${ANLAND_PACKAGE_REVISION})..." && \
+        ANLAND_RELEASE_REPOSITORY="$ANLAND_RELEASE_REPOSITORY" \
         /usr/local/sbin/install-anland-kde --1 && \
-        echo "--> [开启] anland_kde 支持已安装"; \
+        echo "--> [开启] $DESKTOP 的 Anland 支持已安装"; \
     fi
 
 # 强制配置使用 iptables-legacy（兼容 Android 内核的硬性要求）

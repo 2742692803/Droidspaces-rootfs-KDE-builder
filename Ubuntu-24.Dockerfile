@@ -1,4 +1,3 @@
-ARG TARGETPLATFORM
 FROM ubuntu:24.04 AS customizer
 
 #######################################################

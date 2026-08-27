@@ -1,12 +1,13 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-# 软件包归档不会存入 Git；安装 Fork 发布的软件包时可覆盖仓库地址。
+# The package archives are deliberately kept out of Git. Override the
+# repository when installing packages published by a fork.
 readonly DEFAULT_REPOSITORY="Goldzxcbug/droidspaces-package"
-readonly RELEASE_REPOSITORY="${ANLAND_RELEASE_REPOSITORY:-${ANLAND_KDE_RELEASE_REPOSITORY:-$DEFAULT_REPOSITORY}}"
-RELEASE_TAG="${ANLAND_RELEASE_TAG:-${ANLAND_KDE_RELEASE_TAG:-}}"
-readonly ROLLING_RELEASE_TAG="anland-kde-packages"
-readonly MANIFEST_NAME="anland-kde-manifest"
+readonly RELEASE_REPOSITORY="${ANLAND_RELEASE_REPOSITORY:-${ANLAND_GNOME_RELEASE_REPOSITORY:-$DEFAULT_REPOSITORY}}"
+RELEASE_TAG="${ANLAND_RELEASE_TAG:-${ANLAND_GNOME_RELEASE_TAG:-}}"
+readonly ROLLING_RELEASE_TAG="anland-gnome-packages"
+readonly MANIFEST_NAME="anland-gnome-manifest"
 readonly MAX_ARCHIVE_BYTES=$((512 * 1024 * 1024))
 readonly MAX_EXTRACTED_BYTES=$((2 * 1024 * 1024 * 1024))
 readonly SOURCE_PROBE_TIMEOUT_SECONDS=2
@@ -14,19 +15,13 @@ readonly GITHUB_RELEASE_URL="https://github.com"
 readonly GITHUB_API_URL="https://api.github.com"
 readonly GH_PROXY_RELEASE_URL="https://gh-proxy.com/https://github.com"
 readonly GHPROXY_NET_RELEASE_URL="https://ghproxy.net/https://github.com"
-readonly APT_HOLD_STATE="/var/lib/anland-kde/apt-holds"
-readonly DNF_MANAGED_BEGIN="# BEGIN anland-kde package holds"
-readonly DNF_MANAGED_END="# END anland-kde package holds"
-readonly MESA_DNF_MANAGED_BEGIN="# BEGIN install-mesa package holds"
-readonly MESA_DNF_MANAGED_END="# END install-mesa package holds"
-readonly SYSTEMD257_STATE="/etc/droidspaces-systemd257"
+readonly APT_HOLD_STATE="/var/lib/anland-gnome/apt-holds"
 
 WORK_DIR=""
-PREPARED_WORK_DIR="${ANLAND_KDE_WORK_DIR:-}"
-PREPARED_PACKAGE_DIR="${ANLAND_KDE_PACKAGE_DIR:-}"
+PREPARED_WORK_DIR="${ANLAND_GNOME_WORK_DIR:-}"
+PREPARED_PACKAGE_DIR="${ANLAND_GNOME_PACKAGE_DIR:-}"
 UI_LANG="en"
 TARGET=""
-PACKAGE_TYPE=""
 ARCHIVE_PREFIX=""
 ARCHIVE_SUFFIX=""
 ARCHIVE_NAME=""
@@ -55,11 +50,11 @@ msg() {
 }
 
 log() {
-    printf '[anland-kde] %s\n' "$(msg "$1" "$2")"
+    printf '[anland-gnome] %s\n' "$(msg "$1" "$2")"
 }
 
 die() {
-    printf '[anland-kde] %s: %s\n' "$(msg '错误' 'Error')" "$(msg "$1" "$2")" >&2
+    printf '[anland-gnome] %s: %s\n' "$(msg '错误' 'Error')" "$(msg "$1" "$2")" >&2
     exit 1
 }
 
@@ -108,8 +103,8 @@ require_root() {
     if sudo env \
         "ANLAND_RELEASE_REPOSITORY=$RELEASE_REPOSITORY" \
         "ANLAND_RELEASE_TAG=$RELEASE_TAG" \
-        "ANLAND_KDE_WORK_DIR=$WORK_DIR" \
-        "ANLAND_KDE_PACKAGE_DIR=$PACKAGE_DIR" \
+        "ANLAND_GNOME_WORK_DIR=$WORK_DIR" \
+        "ANLAND_GNOME_PACKAGE_DIR=$PACKAGE_DIR" \
         bash "$script_path" "$@"; then
         status=0
     else
@@ -129,50 +124,23 @@ detect_target() {
     local version_id="${VERSION_ID:-}"
     local system_name="${PRETTY_NAME:-$distro_id${version_id:+ $version_id}}"
 
-    case "$distro_id" in
-        arch|archarm)
-            TARGET="Arch Linux"
-            PACKAGE_TYPE="pkg.tar.*"
-            ARCHIVE_PREFIX="anland-kde-arch-kwin-"
-            ARCHIVE_SUFFIX="-aarch64.tar.gz"
-            ARCHIVE_TARGET="arch"
+    [[ -n "$version_id" ]] || die "/etc/os-release 缺少 VERSION_ID。" "/etc/os-release does not contain VERSION_ID."
+    case "$distro_id:$version_id" in
+        debian:13*)
+            TARGET="Debian 13"
+            ARCHIVE_PREFIX="anland-gnome-debian13-mutter-"
+            ARCHIVE_SUFFIX="-arm64.tar.gz"
+            ARCHIVE_TARGET="debian13"
+            ;;
+        ubuntu:26.04*)
+            TARGET="Ubuntu 26.04"
+            ARCHIVE_PREFIX="anland-gnome-ubuntu2604-mutter-"
+            ARCHIVE_SUFFIX="-arm64.tar.gz"
+            ARCHIVE_TARGET="ubuntu2604"
             ;;
         *)
-            [[ -n "$version_id" ]] || die "/etc/os-release 缺少 VERSION_ID。" "/etc/os-release does not contain VERSION_ID."
-            case "$distro_id:$version_id" in
-                debian:13*)
-                    TARGET="Debian 13"
-                    PACKAGE_TYPE="deb"
-                    ARCHIVE_PREFIX="anland-kde-debian13-kwin-"
-                    ARCHIVE_SUFFIX="-arm64.tar.gz"
-                    ARCHIVE_TARGET="debian13"
-                    ;;
-                ubuntu:26.04*)
-                    TARGET="Ubuntu 26.04"
-                    PACKAGE_TYPE="deb"
-                    ARCHIVE_PREFIX="anland-kde-ubuntu2604-kwin-"
-                    ARCHIVE_SUFFIX="-arm64.tar.gz"
-                    ARCHIVE_TARGET="ubuntu2604"
-                    ;;
-                fedora:43*)
-                    TARGET="Fedora 43"
-                    PACKAGE_TYPE="rpm"
-                    ARCHIVE_PREFIX="anland-kde-fedora43-kwin-"
-                    ARCHIVE_SUFFIX="-aarch64.tar.gz"
-                    ARCHIVE_TARGET="fedora43"
-                    ;;
-                fedora:44*)
-                    TARGET="Fedora 44"
-                    PACKAGE_TYPE="rpm"
-                    ARCHIVE_PREFIX="anland-kde-fedora44-kwin-"
-                    ARCHIVE_SUFFIX="-aarch64.tar.gz"
-                    ARCHIVE_TARGET="fedora44"
-                    ;;
-                *)
-                    die "不支持当前系统 ${system_name}。仅支持 Debian 13、Ubuntu 26.04、Fedora 43/44、Arch Linux。" \
-                        "Unsupported system: ${system_name}. Supported systems are Debian 13, Ubuntu 26.04, Fedora 43/44, and Arch Linux."
-                    ;;
-            esac
+            die "不支持当前系统 ${system_name}。仅支持 Debian 13 和 Ubuntu 26.04。" \
+                "Unsupported system: ${system_name}. Supported systems are Debian 13 and Ubuntu 26.04."
             ;;
     esac
 
@@ -466,7 +434,7 @@ select_download_source() {
 
 has_packages() {
     local directory="$1"
-    compgen -G "$directory/*.${PACKAGE_TYPE}" >/dev/null
+    compgen -G "$directory/*.deb" >/dev/null
 }
 
 require_runtime_dependencies() {
@@ -477,11 +445,7 @@ require_runtime_dependencies() {
                 "The installer requires the missing command: ${command_name}."
     done
 
-    case "$PACKAGE_TYPE" in
-        deb) command -v dpkg-deb >/dev/null 2>&1 || die "未找到 dpkg-deb。" "dpkg-deb was not found." ;;
-        rpm) command -v rpm >/dev/null 2>&1 || die "未找到 rpm。" "rpm was not found." ;;
-        pkg.tar.*) command -v pacman >/dev/null 2>&1 || die "未找到 pacman。" "pacman was not found." ;;
-    esac
+    command -v dpkg-deb >/dev/null 2>&1 || die "未找到 dpkg-deb。" "dpkg-deb was not found."
 }
 
 validate_archive_contents() {
@@ -506,7 +470,7 @@ validate_archive_contents() {
                 log "下载包包含不安全路径。" "The downloaded archive contains an unsafe path."
                 return 1
                 ;;
-            "anland-kde-packages/${ARCHIVE_TARGET}/"*) ;;
+            "anland-gnome-packages/${ARCHIVE_TARGET}/"*) ;;
             *)
                 log "下载包包含目标系统目录以外的文件。" \
                     "The downloaded archive contains files outside the target system directory."
@@ -552,29 +516,11 @@ validate_package_architecture() {
     local -a files=()
     local file package_arch
 
-    case "$PACKAGE_TYPE" in
-        deb)
-            mapfile -t files < <(find "$PACKAGE_DIR" -maxdepth 1 -type f -name '*.deb' -print | sort)
-            for file in "${files[@]}"; do
-                package_arch="$(dpkg-deb -f "$file" Architecture)"
-                case "$package_arch" in arm64|all) ;; *) return 1 ;; esac
-            done
-            ;;
-        rpm)
-            mapfile -t files < <(find "$PACKAGE_DIR" -maxdepth 1 -type f -name '*.rpm' -print | sort)
-            for file in "${files[@]}"; do
-                package_arch="$(rpm -qp --queryformat '%{ARCH}' "$file")"
-                case "$package_arch" in aarch64|noarch) ;; *) return 1 ;; esac
-            done
-            ;;
-        pkg.tar.*)
-            mapfile -t files < <(find "$PACKAGE_DIR" -maxdepth 1 -type f -name '*.pkg.tar.*' -print | sort)
-            for file in "${files[@]}"; do
-                package_arch="$(LC_ALL=C pacman -Qip "$file" | sed -n 's/^[[:space:]]*Architecture[[:space:]]*:[[:space:]]*//p')"
-                case "$package_arch" in aarch64|any) ;; *) return 1 ;; esac
-            done
-            ;;
-    esac
+    mapfile -t files < <(find "$PACKAGE_DIR" -maxdepth 1 -type f -name '*.deb' -print | sort)
+    for file in "${files[@]}"; do
+        package_arch="$(dpkg-deb -f "$file" Architecture)"
+        case "$package_arch" in arm64|all) ;; *) return 1 ;; esac
+    done
 
     ((${#files[@]} > 0))
 }
@@ -607,7 +553,7 @@ download_packages_once() {
         return 1
     fi
 
-    PACKAGE_DIR="$WORK_DIR/anland-kde-packages/$ARCHIVE_TARGET"
+    PACKAGE_DIR="$WORK_DIR/anland-gnome-packages/$ARCHIVE_TARGET"
     has_packages "$PACKAGE_DIR" || {
         log "未能获取 ${TARGET} 的安装包。" "Could not obtain packages for ${TARGET}."
         return 1
@@ -626,7 +572,7 @@ download_packages_once() {
 
 download_packages() {
     local attempt
-    WORK_DIR="$(mktemp -d -t anland-kde.XXXXXXXX)"
+    WORK_DIR="$(mktemp -d -t anland-gnome.XXXXXXXX)"
 
     for ((attempt = 1; attempt <= 3; attempt++)); do
         if (( attempt > 1 )); then
@@ -654,9 +600,9 @@ use_prepared_packages() {
         die "预下载目录无效。" "The pre-downloaded package directory is invalid."
     prepared_package_dir="$(realpath -e "$PREPARED_PACKAGE_DIR")" || \
         die "预下载包目录无效。" "The pre-downloaded package directory is invalid."
-    [[ "$prepared_work_dir" =~ ^/tmp/anland-kde\.[A-Za-z0-9]+$ ]] || \
+    [[ "$prepared_work_dir" =~ ^/tmp/anland-gnome\.[A-Za-z0-9]+$ ]] || \
         die "预下载目录无效。" "The pre-downloaded package directory is invalid."
-    [[ "$prepared_package_dir" == "$prepared_work_dir/anland-kde-packages/$ARCHIVE_TARGET" ]] || \
+    [[ "$prepared_package_dir" == "$prepared_work_dir/anland-gnome-packages/$ARCHIVE_TARGET" ]] || \
         die "预下载包的目标系统不匹配。" "The pre-downloaded package target does not match this system."
     [[ -d "$prepared_work_dir" && -d "$prepared_package_dir" ]] || \
         die "预下载包已不存在。" "The pre-downloaded package directory no longer exists."
@@ -694,22 +640,34 @@ write_apt_hold_state() {
 }
 
 install_deb_packages() {
-    local -a files packages
+    local -a archive_files files packages skipped_packages
     local file package
 
     command -v apt-get >/dev/null 2>&1 || die "未找到 apt-get。" "apt-get was not found."
     command -v dpkg-deb >/dev/null 2>&1 || die "未找到 dpkg-deb。" "dpkg-deb was not found."
-    mapfile -t files < <(find "$PACKAGE_DIR" -maxdepth 1 -type f -name '*.deb' -print | sort)
+    mapfile -t archive_files < <(find "$PACKAGE_DIR" -maxdepth 1 -type f -name '*.deb' -print | sort)
+    for file in "${archive_files[@]}"; do
+        package="$(dpkg-deb -f "$file" Package)"
+        case "$package" in
+            libmutter-test-*|mutter-*-tests|mutter-tests|mutter-dev-bin|mutter-doc)
+                skipped_packages+=("$package")
+                continue
+                ;;
+        esac
+        [[ -n "$package" ]] || die "无法读取 deb 包名。" "Could not determine a deb package name."
+        files+=("$file")
+        packages+=("$package")
+    done
     ((${#files[@]} > 0)) || die "没有可安装的 deb 包。" "No installable deb packages were found."
 
+    if ((${#skipped_packages[@]} > 0)); then
+        log "跳过非运行时包：${skipped_packages[*]}。" \
+            "Skipping non-runtime packages: ${skipped_packages[*]}."
+    fi
     log "正在安装 ${#files[@]} 个 deb 包并自动处理依赖..." \
         "Installing ${#files[@]} deb packages and resolving dependencies..."
     apt-get install -y --allow-downgrades --allow-change-held-packages "${files[@]}"
 
-    for file in "${files[@]}"; do
-        package="$(dpkg-deb -f "$file" Package)"
-        [[ -n "$package" ]] && packages+=("$package")
-    done
     mapfile -t packages < <(printf '%s\n' "${packages[@]}" | sort -u)
     ((${#packages[@]} > 0)) || die "无法读取 deb 包名。" "Could not determine the deb package names."
 
@@ -717,392 +675,6 @@ install_deb_packages() {
     log "正在设置 APT hold..." "Applying APT holds..."
     apt-mark hold "${packages[@]}"
     write_apt_hold_state "${packages[@]}"
-    printf '  hold: %s\n' "${packages[@]}"
-}
-
-validate_managed_dnf_block() {
-    local dnf_conf="$1"
-
-    awk -v begin="$DNF_MANAGED_BEGIN" -v end="$DNF_MANAGED_END" '
-        $0 == begin {
-            if (inside) {
-                invalid = 1
-            }
-            begins++
-            inside = 1
-        }
-        $0 == end {
-            if (!inside) {
-                invalid = 1
-            }
-            ends++
-            inside = 0
-        }
-        END { exit (!invalid && !inside && begins == ends && begins <= 1) ? 0 : 1 }
-    ' "$dnf_conf"
-}
-
-rewrite_dnf_config_without_managed_block() {
-    local dnf_conf="$1"
-    local output_file="$2"
-
-    validate_managed_dnf_block "$dnf_conf" || return 1
-
-    awk -v begin="$DNF_MANAGED_BEGIN" -v end="$DNF_MANAGED_END" \
-        -v legacy_begin="# anland-kde: hold patched KWin/Xwayland packages" '
-        $0 == begin { managed = 1; next }
-        $0 == end { managed = 0; next }
-        managed { next }
-        legacy_pending {
-            if ($0 ~ /^[[:space:]]*exclude[[:space:]]*=[[:space:]]*kwin\*[[:space:]]+xorg-x11-server-Xwayland\*[[:space:]]*$/) {
-                legacy_pending = 0
-                next
-            }
-            print legacy_begin
-            legacy_pending = 0
-        }
-        $0 == legacy_begin {
-            legacy_pending = 1
-            next
-        }
-        { print }
-        END {
-            if (legacy_pending) {
-                print legacy_begin
-            }
-        }
-    ' "$dnf_conf" > "$output_file"
-}
-
-rewrite_dnf_config_without_mesa_block() {
-    local dnf_conf="$1"
-    local output_file="$2"
-
-    awk -v begin="$MESA_DNF_MANAGED_BEGIN" -v end="$MESA_DNF_MANAGED_END" '
-        $0 == begin {
-            if (inside) {
-                invalid = 1
-            }
-            begins++
-            inside = 1
-            next
-        }
-        $0 == end {
-            if (!inside) {
-                invalid = 1
-            }
-            ends++
-            inside = 0
-            next
-        }
-        !inside { print }
-        END {
-            if (invalid || inside || begins != ends || begins > 1) {
-                exit 1
-            }
-        }
-    ' "$dnf_conf" > "$output_file"
-}
-
-rewrite_dnf_config_for_package_install() {
-    local dnf_conf="$1"
-    local output_file="$2"
-
-    awk '
-        function sanitize(line, equals, value, count, tokens, result, separator, i) {
-            equals = index(line, "=")
-            value = substr(line, equals + 1)
-            gsub(/,/, " ", value)
-            count = split(value, tokens, /[[:space:]]+/)
-            result = ""
-            separator = ""
-            for (i = 1; i <= count; i++) {
-                if (tokens[i] == "" || tokens[i] == "kwin*" || \
-                    tokens[i] == "xorg-x11-server-Xwayland*") {
-                    continue
-                }
-                result = result separator tokens[i]
-                separator = ","
-            }
-            return result == "" ? "" : substr(line, 1, equals) result
-        }
-        /^\[main\][[:space:]]*$/ {
-            in_main = 1
-            print
-            next
-        }
-        /^\[[^]]+\][[:space:]]*$/ {
-            in_main = 0
-            print
-            next
-        }
-        {
-            if (in_main && $0 ~ /^[[:space:]]*(exclude|excludepkgs)[[:space:]]*=/) {
-                sanitized = sanitize($0)
-                if (sanitized != "") {
-                    print sanitized
-                }
-                next
-            }
-            print
-        }
-    ' "$dnf_conf" > "$output_file"
-}
-
-remove_managed_dnf_excludes() {
-    local dnf_conf="$1"
-    local temporary_conf mesa_stripped_conf transaction_conf
-
-    # 本地补丁 RPM 必须临时绕过两个锁定块；调用方会在 DNF 事务结束后
-    # 立即恢复原始配置。
-    temporary_conf="$(mktemp -t anland-kde-dnf.XXXXXXXX)"
-    mesa_stripped_conf="$(mktemp -t anland-kde-dnf.XXXXXXXX)"
-    transaction_conf="$(mktemp -t anland-kde-dnf.XXXXXXXX)"
-    if ! rewrite_dnf_config_without_managed_block "$dnf_conf" "$temporary_conf" || \
-        ! rewrite_dnf_config_without_mesa_block "$temporary_conf" "$mesa_stripped_conf" || \
-        ! rewrite_dnf_config_for_package_install "$mesa_stripped_conf" "$transaction_conf"; then
-        rm -f -- "$temporary_conf" "$mesa_stripped_conf" "$transaction_conf"
-        return 1
-    fi
-    if ! install -m 0644 "$transaction_conf" "$dnf_conf"; then
-        rm -f -- "$temporary_conf" "$mesa_stripped_conf" "$transaction_conf"
-        return 1
-    fi
-    rm -f -- "$temporary_conf" "$mesa_stripped_conf" "$transaction_conf"
-}
-
-write_dnf_config_with_managed_block() {
-    local dnf_conf="$1"
-    local output_file="$2"
-    local stripped_conf
-    local excluded_packages="kwin*,xorg-x11-server-Xwayland*"
-
-    if [[ -e "$SYSTEMD257_STATE" ]]; then
-        excluded_packages+=",systemd*"
-    fi
-
-    stripped_conf="$(mktemp -t anland-kde-dnf.XXXXXXXX)"
-    if ! rewrite_dnf_config_without_managed_block "$dnf_conf" "$stripped_conf"; then
-        rm -f -- "$stripped_conf"
-        return 1
-    fi
-    if ! awk -v begin="$DNF_MANAGED_BEGIN" -v end="$DNF_MANAGED_END" \
-        -v excludes="$excluded_packages" '
-        function contains(value, wanted, normalized, count, tokens, i) {
-            normalized = value
-            gsub(/,/, " ", normalized)
-            count = split(normalized, tokens, /[[:space:]]+/)
-            for (i = 1; i <= count; i++) {
-                if (tokens[i] == wanted) {
-                    return 1
-                }
-            }
-            return 0
-        }
-        function merge_excludes(line, equals, value, trimmed, separator, count, wanted, i) {
-            equals = index(line, "=")
-            value = substr(line, equals + 1)
-            trimmed = value
-            sub(/[[:space:]]+$/, "", trimmed)
-            separator = (trimmed == "" || trimmed ~ /,$/) ? "" : ","
-            count = split(excludes, wanted, ",")
-            for (i = 1; i <= count; i++) {
-                if (!contains(value, wanted[i])) {
-                    value = value separator wanted[i]
-                    separator = ","
-                }
-            }
-            return substr(line, 1, equals) value
-        }
-        function write_block() {
-            print begin
-            print "excludepkgs=" excludes
-            print end
-        }
-        /^\[main\][[:space:]]*$/ {
-            in_main = 1
-            saw_main = 1
-            print
-            next
-        }
-        /^\[[^]]+\][[:space:]]*$/ {
-            if (in_main && !saw_exclude) {
-                write_block()
-            }
-            in_main = 0
-            print
-            next
-        }
-        {
-            if (in_main && $0 ~ /^[[:space:]]*excludepkgs[[:space:]]*=/) {
-                print merge_excludes($0)
-                saw_exclude = 1
-                next
-            }
-            print
-        }
-        END {
-            if (in_main && !saw_exclude) {
-                write_block()
-            }
-            if (!saw_main) {
-                print "[main]"
-                write_block()
-            }
-        }
-    ' "$stripped_conf" > "$output_file"; then
-        rm -f -- "$stripped_conf"
-        return 1
-    fi
-    rm -f -- "$stripped_conf"
-}
-
-configure_dnf_excludes() {
-    local dnf_conf="/etc/dnf/dnf.conf"
-    local temporary_conf
-
-    touch "$dnf_conf"
-    temporary_conf="$(mktemp -t anland-kde-dnf.XXXXXXXX)"
-    if ! write_dnf_config_with_managed_block "$dnf_conf" "$temporary_conf"; then
-        rm -f -- "$temporary_conf"
-        return 1
-    fi
-    if ! install -m 0644 "$temporary_conf" "$dnf_conf"; then
-        rm -f -- "$temporary_conf"
-        return 1
-    fi
-    rm -f -- "$temporary_conf"
-}
-
-install_rpm_packages() {
-    local -a files packages dnf_install_options=('--allow-downgrade')
-    local -A expected_nevra_by_package=()
-    local dnf_conf="/etc/dnf/dnf.conf"
-    local dnf_backup
-    local file package expected_nevra actual_nevra
-    local verification_failed=false
-
-    command -v dnf >/dev/null 2>&1 || die "未找到 dnf。" "dnf was not found."
-    command -v rpm >/dev/null 2>&1 || die "未找到 rpm。" "rpm was not found."
-    mapfile -t files < <(find "$PACKAGE_DIR" -maxdepth 1 -type f -name '*.rpm' -print | sort)
-    ((${#files[@]} > 0)) || die "没有可安装的 rpm 包。" "No installable rpm packages were found."
-
-    for file in "${files[@]}"; do
-        package="$(rpm -qp --queryformat '%{NAME}' "$file")" || die \
-            "无法读取 rpm 包名：${file##*/}。" \
-            "Could not read the RPM package name: ${file##*/}."
-        expected_nevra="$(rpm -qp --queryformat '%{NAME}-%{EPOCHNUM}:%{VERSION}-%{RELEASE}.%{ARCH}' "$file")" || die \
-            "无法读取 rpm NEVRA：${file##*/}。" \
-            "Could not read the RPM NEVRA: ${file##*/}."
-        [[ -n "$package" && -n "$expected_nevra" ]] || die \
-            "rpm 元数据不完整：${file##*/}。" \
-            "The RPM metadata is incomplete: ${file##*/}."
-        [[ -z "${expected_nevra_by_package[$package]+present}" ]] || die \
-            "下载包包含重复的 rpm 包名：${package}。" \
-            "The archive contains a duplicate RPM package name: ${package}."
-        expected_nevra_by_package["$package"]="$expected_nevra"
-        packages+=("$package")
-    done
-    mapfile -t packages < <(printf '%s\n' "${packages[@]}" | sort -u)
-
-    log "正在安装 ${#files[@]} 个 rpm 包并自动处理依赖..." \
-        "Installing ${#files[@]} rpm packages and resolving dependencies..."
-    touch "$dnf_conf"
-    dnf_backup="$(mktemp -t anland-kde-dnf-backup.XXXXXXXX)"
-    cp -p "$dnf_conf" "$dnf_backup"
-    if grep -Fqx "$MESA_DNF_MANAGED_BEGIN" "$dnf_conf"; then
-        dnf_install_options+=('--exclude=mesa*')
-    fi
-    if [[ -e "$SYSTEMD257_STATE" ]]; then
-        dnf_install_options+=('--exclude=systemd*')
-    fi
-    if ! remove_managed_dnf_excludes "$dnf_conf" || \
-        ! dnf install -y "${dnf_install_options[@]}" "${files[@]}"; then
-        install -m 0644 "$dnf_backup" "$dnf_conf" || true
-        rm -f -- "$dnf_backup"
-        die "rpm 软件包安装失败。" "RPM package installation failed."
-    fi
-    if ! install -m 0644 "$dnf_backup" "$dnf_conf"; then
-        rm -f -- "$dnf_backup"
-        die "无法恢复 DNF 锁定配置。" "Unable to restore the DNF hold configuration."
-    fi
-
-    for package in "${packages[@]}"; do
-        if ! actual_nevra="$(rpm -q --queryformat '%{NAME}-%{EPOCHNUM}:%{VERSION}-%{RELEASE}.%{ARCH}\n' "$package" 2>/dev/null)"; then
-            log "安装后找不到 rpm 包：${package}。" \
-                "The RPM package is missing after installation: ${package}."
-            verification_failed=true
-            continue
-        fi
-        if [[ "$actual_nevra" != "${expected_nevra_by_package[$package]}" ]]; then
-            log "rpm 版本不匹配：${package}，需要 ${expected_nevra_by_package[$package]}，实际为 ${actual_nevra//$'\n'/, }。" \
-                "RPM version mismatch for ${package}: expected ${expected_nevra_by_package[$package]}, got ${actual_nevra//$'\n'/, }."
-            verification_failed=true
-        fi
-    done
-    if [[ "$verification_failed" == true ]]; then
-        rm -f -- "$dnf_backup"
-        die "rpm 安装结果未通过 NEVRA 校验，未写入软件包锁定。" \
-            "The RPM transaction failed NEVRA verification; package holds were not written."
-    fi
-
-    log "正在设置 DNF exclude（等效于 hold）..." "Applying DNF excludes (equivalent to hold)..."
-    if ! configure_dnf_excludes; then
-        install -m 0644 "$dnf_backup" "$dnf_conf" || true
-        rm -f -- "$dnf_backup"
-        die "无法更新 DNF 锁定配置。" "Unable to update the DNF hold configuration."
-    fi
-    rm -f -- "$dnf_backup"
-    printf '  hold: %s\n' "${packages[@]}"
-}
-
-install_arch_packages() {
-    local -a files packages
-    local pacman_conf package
-
-    command -v pacman >/dev/null 2>&1 || die "未找到 pacman。" "pacman was not found."
-    mapfile -t files < <(find "$PACKAGE_DIR" -maxdepth 1 -type f -name '*.pkg.tar.*' -print | sort)
-    ((${#files[@]} > 0)) || die "没有可安装的 Arch 包。" "No installable Arch packages were found."
-
-    log "正在安装 ${#files[@]} 个 Arch 包..." "Installing ${#files[@]} Arch packages..."
-    pacman_conf="$(mktemp -t anland-kde-pacman.XXXXXXXX)"
-    cp /etc/pacman.conf "$pacman_conf"
-    if grep -Eq '^[[:space:]]*#?[[:space:]]*LocalFileSigLevel[[:space:]]*=' "$pacman_conf"; then
-        sed -i -E 's/^[[:space:]]*#?[[:space:]]*LocalFileSigLevel[[:space:]]*=.*/LocalFileSigLevel = Optional/' "$pacman_conf"
-    elif grep -qE '^\[options\][[:space:]]*$' "$pacman_conf"; then
-        sed -i '/^\[options\][[:space:]]*$/a LocalFileSigLevel = Optional' "$pacman_conf"
-    else
-        rm -f -- "$pacman_conf"
-        die "pacman.conf 缺少 [options] 段。" "pacman.conf has no [options] section."
-    fi
-    if ! pacman --config "$pacman_conf" -U --noconfirm "${files[@]}"; then
-        rm -f -- "$pacman_conf"
-        die "Arch 软件包安装失败。" "Arch package installation failed."
-    fi
-    rm -f -- "$pacman_conf"
-
-    for package in kwin xorg-xwayland; do
-        if ! awk -v package="$package" '
-            $1 == "IgnorePkg" {
-                for (i = 3; i <= NF; i++) {
-                    if ($i == package) {
-                        found = 1
-                    }
-                }
-            }
-            END { exit found ? 0 : 1 }
-        ' /etc/pacman.conf; then
-            if grep -qE '^[[:space:]]*IgnorePkg[[:space:]]*=' /etc/pacman.conf; then
-                sed -i -E "0,/^[[:space:]]*IgnorePkg[[:space:]]*=/{s/^([[:space:]]*IgnorePkg[[:space:]]*=.*)$/\\1 ${package}/}" /etc/pacman.conf
-            elif grep -qE '^\[options\][[:space:]]*$' /etc/pacman.conf; then
-                sed -i "/^\[options\][[:space:]]*$/a IgnorePkg = ${package}" /etc/pacman.conf
-            else
-                die "pacman.conf 缺少 [options] 段。" "pacman.conf has no [options] section."
-            fi
-        fi
-    done
-    mapfile -t packages < <(pacman -Qq -p "${files[@]}" | sort -u)
-    ((${#packages[@]} > 0)) || die "无法读取 Arch 包名。" "Could not determine the Arch package names."
     printf '  hold: %s\n' "${packages[@]}"
 }
 
@@ -1121,14 +693,10 @@ main() {
     fi
     require_root "$@"
 
-    case "$PACKAGE_TYPE" in
-        deb) install_deb_packages ;;
-        rpm) install_rpm_packages ;;
-        pkg.tar.*) install_arch_packages ;;
-    esac
+    install_deb_packages
 
-    log "安装完成，patched KWin/Xwayland 已锁定。" \
-        "Installation complete; patched KWin/Xwayland packages are now locked."
+    log "安装完成，patched Mutter/Xwayland 已锁定。" \
+        "Installation complete; patched Mutter/Xwayland packages are now locked."
 }
 
 main "$@"

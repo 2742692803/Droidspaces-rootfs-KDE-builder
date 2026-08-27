@@ -1,6 +1,7 @@
 #!/bin/bash
 REPO_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 source "$REPO_DIR/scripts/lib/desktop-config.sh"
+source "$REPO_DIR/scripts/lib/anland-build.sh"
 
 : "${VERSION:=dev}"
 TARGET_ARCH="aarch64"     # 产物命名使用的目标架构
@@ -35,18 +36,16 @@ while getopts "i:v:K:L:B:P:a:b:c:d:e:f:g:h:j:n:S:t:u:A:" opt; do
     t) ENABLE_8gen2_wayland="$OPTARG" ;; # 修复骁龙8 Gen 2 Wayland 花屏
     u) USERNAME="$OPTARG" ;; 
     A) LEGACY_ANLAND_INPUT="$OPTARG" ;; # 兼容旧参数
-    *) echo "用法: $0 -i <template.Dockerfile> -K <none|KDE|'KDE mobile'> [-B <x11|anland-wayland>]" ; exit 1 ;;
+    *) echo "用法: $0 -i <template.Dockerfile> -K <none|KDE|'KDE mobile'|GNOME> [-B <x11|anland-wayland>]" ; exit 1 ;;
   esac
 done
 
 : "${USERNAME:=Gold}"
-: "${ANLAND_KDE_RELEASE_REPOSITORY:=Goldzxcbug/droidspaces-package}"
-: "${ANLAND_KDE_RELEASE_TAG:=}"
-: "${ANLAND_KDE_PACKAGE_REVISION:=}"
-ANLAND_KDE_ROLLING_RELEASE_TAG="anland-kde-packages"
+: "${ANLAND_RELEASE_REPOSITORY:=Goldzxcbug/droidspaces-package}"
+: "${ANLAND_PACKAGE_REVISION:=}"
 
 if ! DESKTOP="$(desktop_normalize "${DESKTOP_INPUT:-}")"; then
-  echo "错误：-K 只支持 none、KDE 或 'KDE mobile'。" >&2
+  echo "错误：-K 只支持 none、KDE、'KDE mobile' 或 GNOME。" >&2
   exit 1
 fi
 if [[ -n "${LEGACY_ANLAND_INPUT:-}" ]]; then
@@ -62,30 +61,13 @@ if ! DISPLAY_BACKEND="$(display_backend_normalize "$DISPLAY_BACKEND_INPUT")"; th
 fi
 case "$DESKTOP_AUTOSTART" in true|false) ;; *) echo "错误：-L 只支持 true 或 false。" >&2; exit 1 ;; esac
 
-if [[ "$DESKTOP" == kde-mobile ]]; then
+if [[ "$DESKTOP" == kde-mobile || "$DESKTOP" == gnome ]]; then
   DISPLAY_BACKEND="anland-wayland"
 fi
 if [[ "$DISPLAY_BACKEND" == anland-wayland ]]; then
   PulseAudio="none"
 fi
-INSTALL_ANLAND_KDE_PACKAGES="false"
-if [[ "$DISPLAY_BACKEND" == anland-wayland ]] && desktop_uses_anland_kde_packages "$DESKTOP"; then
-  INSTALL_ANLAND_KDE_PACKAGES="true"
-fi
-
-resolve_anland_kde_release_tag() {
-  case "$ANLAND_KDE_RELEASE_TAG" in
-    anland-kde-packages) return 0 ;;
-    '')
-      ANLAND_KDE_RELEASE_TAG="$ANLAND_KDE_ROLLING_RELEASE_TAG"
-      return 0
-      ;;
-    *)
-      echo "错误：ANLAND_KDE_RELEASE_TAG 必须是固定标签 anland-kde-packages。" >&2
-      return 1
-      ;;
-  esac
-}
+ANLAND_PACKAGE_FAMILY="$(anland_package_family "$DESKTOP" "$DISPLAY_BACKEND" || true)"
 
 # 校验：检查是否传递了 Dockerfile 模板文件
 if [ -z "$DOCKERFILE" ]; then
@@ -130,38 +112,15 @@ echo " 显示后端：$DISPLAY_BACKEND"
 echo " 桌面自启动：$DESKTOP_AUTOSTART"
 echo "========================================================="
 
-if [ "$INSTALL_ANLAND_KDE_PACKAGES" = "true" ]; then
-  if ! resolve_anland_kde_release_tag; then
+if [ -n "$ANLAND_PACKAGE_FAMILY" ]; then
+  if ! anland_prepare_release "$ANLAND_PACKAGE_FAMILY" "$ANLAND_RELEASE_REPOSITORY" "$ANLAND_PACKAGE_REVISION"; then
     exit 1
   fi
-  if [ -z "$ANLAND_KDE_PACKAGE_REVISION" ]; then
-    if ! command -v curl >/dev/null 2>&1; then
-      echo "错误：启用 anland_kde 时需要 curl 读取 KDE 包 Release 清单。"
-      exit 1
-    fi
-    if ! RELEASE_MANIFEST="$(curl -fsSL --retry 3 --connect-timeout 20 \
-      "https://github.com/${ANLAND_KDE_RELEASE_REPOSITORY}/releases/download/${ANLAND_KDE_RELEASE_TAG}/anland-kde-manifest")"; then
-      echo "错误：无法下载 anland KDE 包 Release 清单。"
-      exit 1
-    fi
-    ANLAND_KDE_PACKAGE_REVISION="$(printf '%s\n' "$RELEASE_MANIFEST" | awk -F= '
-      $1 == "format" { format = substr($0, index($0, "=") + 1) }
-      $1 == "revision" { revision = substr($0, index($0, "=") + 1); revisions++ }
-      END {
-        if (format == "1" && revisions == 1 && revision ~ /^[A-Za-z0-9._-]+$/) {
-          print revision
-        }
-      }
-    ')"
-  fi
-
-  if [ -z "$ANLAND_KDE_PACKAGE_REVISION" ]; then
-    echo "错误：Release 清单缺少有效 revision。"
-    exit 1
-  fi
-  echo " Anland KDE 包 Release：$ANLAND_KDE_RELEASE_REPOSITORY @ $ANLAND_KDE_RELEASE_TAG"
+  ANLAND_RELEASE_TAG="$ANLAND_RESOLVED_RELEASE_TAG"
+  ANLAND_PACKAGE_REVISION="$ANLAND_RESOLVED_REVISION"
+  echo " Anland ${ANLAND_PACKAGE_FAMILY^^} 包 Release：$ANLAND_RELEASE_REPOSITORY @ $ANLAND_RELEASE_TAG"
 else
-  ANLAND_KDE_PACKAGE_REVISION="${ANLAND_KDE_PACKAGE_REVISION:-disabled}"
+  ANLAND_PACKAGE_REVISION="disabled"
 fi
 
 # 1. 环境初始化（跨架构 QEMU 模式）
@@ -201,7 +160,6 @@ docker buildx build \
   --build-arg DESKTOP="$DESKTOP" \
   --build-arg DESKTOP_AUTOSTART="$DESKTOP_AUTOSTART" \
   --build-arg DISPLAY_BACKEND="$DISPLAY_BACKEND" \
-  --build-arg INSTALL_ANLAND_KDE_PACKAGES="$INSTALL_ANLAND_KDE_PACKAGES" \
   --build-arg PulseAudio="$PulseAudio" \
   --build-arg ENABLE_zh_tz_ARG="$ENABLE_zh_tz" \
   --build-arg ENABLE_binfmt_ARG="$ENABLE_binfmt" \
@@ -215,9 +173,8 @@ docker buildx build \
   --build-arg ENABLE_nosnap_ARG="$ENABLE_nosnap" \
   --build-arg ENABLE_systemd257_ARG="$ENABLE_systemd257" \
   --build-arg ENABLE_8gen2_wayland_ARG="$ENABLE_8gen2_wayland" \
-  --build-arg ANLAND_KDE_RELEASE_REPOSITORY="$ANLAND_KDE_RELEASE_REPOSITORY" \
-  --build-arg ANLAND_KDE_RELEASE_TAG="$ANLAND_KDE_RELEASE_TAG" \
-  --build-arg ANLAND_KDE_PACKAGE_REVISION="$ANLAND_KDE_PACKAGE_REVISION" \
+  --build-arg ANLAND_RELEASE_REPOSITORY="$ANLAND_RELEASE_REPOSITORY" \
+  --build-arg ANLAND_PACKAGE_REVISION="$ANLAND_PACKAGE_REVISION" \
   --build-arg USERNAME="$USERNAME" \
   -f "$DOCKERFILE" \
   .

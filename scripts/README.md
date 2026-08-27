@@ -13,6 +13,9 @@
 | `start-desktop-session.sh` | Linux 容器 | 根据 `/etc/droidspaces-desktop.conf` 启动实际桌面会话。 |
 | `install-mesa.sh` | ARM64 Linux 容器 | 安装最新版 Android 容器专用 Mesa 和 MediaCodec VA-API 驱动，并锁定 Mesa 包。 |
 | `install-anland-kde.sh` | ARM64 Linux 容器 | 安装 Anland patched KWin/Xwayland Release 包，并锁定相关包。 |
+| `install-anland-gnome.sh` | ARM64 Debian/Ubuntu 容器 | 安装 Anland patched Mutter/Xwayland Release 包，并锁定相关包。 |
+| `install-anland-desktop.sh` | RootFS 构建环境 | 根据桌面 slug 分发到 KDE 或 GNOME Anland 安装器。 |
+| `lib/anland-build.sh` | RootFS 构建宿主 | 为 native/QEMU 构建统一解析 Anland 包族、Release tag 和 revision。 |
 | `install-usb-manager.sh` | Linux 容器 | 安装 Droidspaces USB Manager、发行版依赖、菜单入口和用户权限。 |
 | `systemd257.sh` | RootFS 构建环境 | 在需要时安装由包管理器管控的 systemd 257 完整包族，供旧 Android 内核使用。 |
 | `download-firmware` | Debian/Ubuntu 容器 | 安装并解压 `linux-firmware` 中的 `.zst` 固件。 |
@@ -51,7 +54,7 @@ sudo ./scripts/install-mesa.sh --3  # ghproxy.net
 | Fedora | `/etc/dnf/dnf.conf` 中脚本管理的 `exclude` 块 |
 | Arch | `/etc/pacman.conf` 中脚本管理的 `IgnorePkg` 块 |
 
-锁定范围仅根据归档中实际安装的 Mesa 包生成。KWin 与 Xwayland 只由 `install-anland-kde.sh` 锁定。托管配置可重复运行，不会不断追加相同块；已有的非托管配置会保留。
+锁定范围仅根据归档中实际安装的 Mesa 包生成。KWin/Xwayland 与 Mutter/Xwayland 分别由 `install-anland-kde.sh` 和 `install-anland-gnome.sh` 锁定。托管配置可重复运行，不会不断追加相同块；已有的非托管配置会保留。
 
 ## 新增桌面 profile
 
@@ -62,7 +65,7 @@ sudo ./scripts/install-mesa.sh --3  # ghproxy.net
 3. 在 `start-desktop-session.sh` 添加会话命令；`install-desktop.sh` 会自动发现合法 slug 对应的可执行 profile。
 4. 在中英文工作流入口的 `desktop` 下拉中加入显示名称。
 
-七个 Dockerfile 和核心工作流已经使用通用 profile 接口，普通 X11 桌面无需复制 Dockerfile。只有确实依赖 patched KWin/Xwayland 的 profile 才应在 `desktop_uses_anland_kde_packages` 中登记。
+七个 Dockerfile 和核心工作流已经使用通用 profile 接口，普通 X11 桌面无需复制 Dockerfile。依赖 patched Wayland 包的 profile 还需在 `lib/anland-build.sh` 的 `anland_package_family` 中登记包族。
 
 ## Anland KDE 安装器
 
@@ -77,11 +80,26 @@ sudo ./scripts/install-anland-kde.sh
 安装公开 Fork 发布的包时只需覆盖仓库；Fork 必须提供固定标签 `anland-kde-packages`：
 
 ```bash
-sudo ANLAND_KDE_RELEASE_REPOSITORY=owner/repository \
+sudo ANLAND_RELEASE_REPOSITORY=owner/repository \
   ./scripts/install-anland-kde.sh --1
 ```
 
 Anland 宿主模块、App、SELinux、绑定挂载和 Droidspaces 权限仍需按[项目主页的 Wayland 和 Anland 配置](../README.md#wayland-和-anland-配置)完成。
+
+## Anland GNOME 安装器
+
+`install-anland-gnome.sh` 默认从固定滚动 Release `anland-gnome-packages` 读取 `anland-gnome-manifest`，为 Debian 13 或 Ubuntu 26.04 ARM64 安装 patched Mutter/Xwayland 运行时包，并跳过归档中的测试/开发包。下载源选择、镜像 digest 校验和命令行参数与 KDE 安装器一致；安装结果通过 APT hold 防止升级覆盖。
+
+```bash
+sudo ./scripts/install-anland-gnome.sh
+```
+
+使用公开 Fork 的包时同时覆盖 GNOME 仓库变量：
+
+```bash
+sudo ANLAND_RELEASE_REPOSITORY=owner/repository \
+  ./scripts/install-anland-gnome.sh --1
+```
 
 ## USB Manager 安装器
 
@@ -131,6 +149,7 @@ sudo download-firmware
 ```bash
 bash -n scripts/install-mesa.sh
 bash -n scripts/install-anland-kde.sh
+bash -n scripts/install-anland-gnome.sh
 bash -n scripts/install-usb-manager.sh
 shellcheck scripts/install-mesa.sh
 ```

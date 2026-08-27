@@ -32,13 +32,14 @@ on:
           - none
           - KDE
           - KDE mobile
+          - GNOME
       desktop_autostart:
         description: Start desktop on boot
         required: true
         type: boolean
         default: true
       display_backend:
-        description: Display backend (KDE mobile always uses Anland Wayland)
+        description: Display backend (KDE mobile/GNOME always use Anland Wayland)
         required: true
         type: choice
         default: x11

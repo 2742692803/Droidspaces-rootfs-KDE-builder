@@ -10,6 +10,7 @@ case "${DESKTOP:-}:${DISPLAY_BACKEND:-}" in
     kde:x11) command_line='export DISPLAY="${DISPLAY:-:5}"; exec startplasma-x11' ;;
     kde:anland-wayland) command_line='exec startplasma-wayland' ;;
     kde-mobile:anland-wayland) command_line='exec startplasmamobile' ;;
+    gnome:anland-wayland) command_line='export XDG_SESSION_TYPE=wayland XDG_CURRENT_DESKTOP=GNOME XDG_SESSION_DESKTOP=gnome GNOME_SHELL_SESSION_MODE=gnome WAYLAND_DISPLAY=wayland-anland GNOME_WAYLAND_DISPLAY=wayland-anland; exec dbus-run-session -- gnome-session --session=gnome' ;;
     *)
         echo "不支持的桌面会话：${DESKTOP:-未设置}/${DISPLAY_BACKEND:-未设置}" >&2
         exit 1

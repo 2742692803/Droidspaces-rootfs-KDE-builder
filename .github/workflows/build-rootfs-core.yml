@@ -144,7 +144,7 @@ jobs:
               "Custom username must be a 1-32 character Linux username."
           fi
 
-          if [ "$DESKTOP" = "kde-mobile" ]; then
+          if [ "$DESKTOP" = "kde-mobile" ] || [ "$DESKTOP" = "gnome" ]; then
             DISPLAY_BACKEND="anland-wayland"
           fi
           if [ "$DESKTOP" = "none" ] && [ "$DESKTOP_AUTOSTART" = "true" ]; then
@@ -238,8 +238,7 @@ jobs:
 
       - name: ${{ inputs.ui_language == 'zh' && format('构建根文件系统（{0}）', matrix.template) || format('Build RootFS ({0})', matrix.template) }}
         env:
-          ANLAND_KDE_RELEASE_REPOSITORY: ${{ inputs.wayland_package_repository }}
-          ANLAND_KDE_RELEASE_TAG: anland-kde-packages
+          ANLAND_RELEASE_REPOSITORY: ${{ inputs.wayland_package_repository }}
           CUSTOM_USERNAME: ${{ inputs.custom_username }}
         run: |
           chmod +x build_rootfs-native.sh

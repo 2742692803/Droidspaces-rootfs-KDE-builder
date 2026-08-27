@@ -1,4 +1,3 @@
-ARG TARGETPLATFORM
 FROM debian:trixie AS customizer
 
 #######################################################
@@ -15,13 +14,11 @@ ARG ENABLE_docker_ARG
 ARG ENABLE_srf_ARG
 ARG ENABLE_tmoe_ARG
 ARG DISPLAY_BACKEND
-ARG INSTALL_ANLAND_KDE_PACKAGES
 ARG ENABLE_8gen2_wayland_ARG
 ARG ENABLE_systemd257_ARG
 ARG USERNAME
-ARG ANLAND_KDE_RELEASE_REPOSITORY=Goldzxcbug/droidspaces-package
-ARG ANLAND_KDE_RELEASE_TAG
-ARG ANLAND_KDE_PACKAGE_REVISION=unknown
+ARG ANLAND_RELEASE_REPOSITORY=Goldzxcbug/droidspaces-package
+ARG ANLAND_PACKAGE_REVISION=unknown
 ######################################################
 
 ENV DEBIAN_FRONTEND=noninteractive
@@ -49,6 +46,8 @@ COPY scripts/bashrc.sh /etc/profile.d/ds-aliases.sh
 COPY scripts/install-usb-manager.sh /usr/local/sbin/install-droidspaces-usb-manager
 COPY scripts/systemd257.sh /usr/local/sbin/systemd257
 COPY scripts/install-anland-kde.sh /usr/local/sbin/install-anland-kde
+COPY scripts/install-anland-gnome.sh /usr/local/sbin/install-anland-gnome
+COPY scripts/install-anland-desktop.sh /usr/local/sbin/install-anland-desktop
 COPY scripts/install-mesa.sh /usr/local/sbin/install-mesa
 COPY scripts/install-desktop.sh /usr/local/sbin/install-desktop
 COPY scripts/configure-desktop.sh /usr/local/sbin/configure-desktop
@@ -56,7 +55,7 @@ COPY scripts/start-desktop-session.sh /usr/local/bin/start-desktop-session
 COPY scripts/desktops/ /usr/local/lib/droidspaces/desktops/
 
 # 赋予相关脚本可执行权限
-RUN chmod +x /usr/local/bin/download-firmware /etc/profile.d/ds-aliases.sh /usr/local/sbin/install-anland-kde /usr/local/sbin/install-mesa /usr/local/sbin/install-desktop /usr/local/sbin/configure-desktop /usr/local/bin/start-desktop-session /usr/local/lib/droidspaces/desktops/*.sh
+RUN chmod +x /usr/local/bin/download-firmware /etc/profile.d/ds-aliases.sh /usr/local/sbin/install-anland-* /usr/local/sbin/install-mesa /usr/local/sbin/install-desktop /usr/local/sbin/configure-desktop /usr/local/bin/start-desktop-session /usr/local/lib/droidspaces/desktops/*.sh
 
 RUN apt-get update && \
     apt-get install -y --no-install-recommends \
@@ -71,18 +70,12 @@ RUN apt-get update && \
     # 核心内核模块支持
     kmod tzdata tar && \
     /usr/local/sbin/install-desktop "$DESKTOP" && \
-    ############################################## anland_kde(wayland) 支持 ################################################
-    if [ "$INSTALL_ANLAND_KDE_PACKAGES" = "true" ]; then \
-        if [ -z "$ANLAND_KDE_RELEASE_TAG" ]; then \
-            echo "错误：Docker 构建必须传入固定的 ANLAND_KDE_RELEASE_TAG。" >&2; \
-            exit 1; \
-        fi && \
-        echo "--> [开启] 正在安装 anland_kde..." && \
-        echo "--> [开启] 从固定滚动 Release 下载预编译包 (${ANLAND_KDE_PACKAGE_REVISION})..." && \
-        ANLAND_KDE_RELEASE_REPOSITORY="$ANLAND_KDE_RELEASE_REPOSITORY" \
-        ANLAND_KDE_RELEASE_TAG="$ANLAND_KDE_RELEASE_TAG" \
-        /usr/local/sbin/install-anland-kde --1 && \
-        echo "--> [开启] anland_kde 支持已安装"; \
+    ############################################## Anland Wayland 支持 ################################################
+    if [ "$DISPLAY_BACKEND" = "anland-wayland" ]; then \
+        echo "--> [开启] 正在安装 $DESKTOP 的 Anland 包 (${ANLAND_PACKAGE_REVISION})..." && \
+        ANLAND_RELEASE_REPOSITORY="$ANLAND_RELEASE_REPOSITORY" \
+        /usr/local/sbin/install-anland-desktop "$DESKTOP" --1 && \
+        echo "--> [开启] $DESKTOP 的 Anland 支持已安装"; \
     fi && \
     ######################################################################################################
     #输入法 fcitx5 (可选)

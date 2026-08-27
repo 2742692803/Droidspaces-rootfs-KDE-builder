@@ -1,4 +1,3 @@
-ARG TARGETPLATFORM
 FROM ogarcia/archlinux AS customizer
 
 #######################################################
@@ -10,7 +9,6 @@ ARG ENABLE_binfmt_ARG
 ARG ENABLE_yj_ARG
 ARG ENABLE_mesa_ARG
 ARG DISPLAY_BACKEND
-ARG INSTALL_ANLAND_KDE_PACKAGES
 ARG ENABLE_8gen2_wayland_ARG
 ARG ENABLE_kfgj_ARG
 ARG ENABLE_zip_ARG
@@ -19,9 +17,8 @@ ARG ENABLE_srf_ARG
 ARG ENABLE_tmoe_ARG
 ARG ENABLE_systemd257_ARG
 ARG USERNAME
-ARG ANLAND_KDE_RELEASE_REPOSITORY=Goldzxcbug/droidspaces-package
-ARG ANLAND_KDE_RELEASE_TAG
-ARG ANLAND_KDE_PACKAGE_REVISION=unknown
+ARG ANLAND_RELEASE_REPOSITORY=Goldzxcbug/droidspaces-package
+ARG ANLAND_PACKAGE_REVISION=unknown
 ######################################################
 
 COPY scripts/install-usb-manager.sh /usr/local/sbin/install-droidspaces-usb-manager
@@ -33,7 +30,7 @@ COPY scripts/configure-desktop.sh /usr/local/sbin/configure-desktop
 COPY scripts/start-desktop-session.sh /usr/local/bin/start-desktop-session
 COPY scripts/desktops/ /usr/local/lib/droidspaces/desktops/
 
-RUN chmod +x /usr/local/sbin/install-anland-kde /usr/local/sbin/install-mesa /usr/local/sbin/install-desktop /usr/local/sbin/configure-desktop /usr/local/bin/start-desktop-session /usr/local/lib/droidspaces/desktops/*.sh && \
+RUN chmod +x /usr/local/sbin/install-anland-* /usr/local/sbin/install-mesa /usr/local/sbin/install-desktop /usr/local/sbin/configure-desktop /usr/local/bin/start-desktop-session /usr/local/lib/droidspaces/desktops/*.sh && \
     sed -i '/^#ParallelDownloads/s/^#//' /etc/pacman.conf && \
     sed -i '/NoExtract.*locale/d' /etc/pacman.conf && \
     sed -i '/NoExtract.*i18n/d' /etc/pacman.conf && \
@@ -80,17 +77,12 @@ RUN chmod +x /usr/local/sbin/install-anland-kde /usr/local/sbin/install-mesa /us
         chmod -R 755 /usr/local/etc/tmoe-linux; \
     fi
 
-# 启用 Anland 时从固定滚动 GitHub Release 安装 ARM64 patched KWin/Xwayland。
-RUN if [ "$INSTALL_ANLAND_KDE_PACKAGES" = "true" ]; then \
-        if [ -z "$ANLAND_KDE_RELEASE_TAG" ]; then \
-            echo "A fixed ANLAND_KDE_RELEASE_TAG is required for Docker builds." >&2; \
-            exit 1; \
-        fi && \
-        echo "--> [enabled] Installing Anland KDE packages (${ANLAND_KDE_PACKAGE_REVISION})..." && \
-        ANLAND_KDE_RELEASE_REPOSITORY="$ANLAND_KDE_RELEASE_REPOSITORY" \
-        ANLAND_KDE_RELEASE_TAG="$ANLAND_KDE_RELEASE_TAG" \
+# 启用 Anland 时从固定滚动 GitHub Release 安装对应桌面的 ARM64 包。
+RUN if [ "$DISPLAY_BACKEND" = "anland-wayland" ]; then \
+        echo "--> [enabled] Installing Anland $DESKTOP packages (${ANLAND_PACKAGE_REVISION})..." && \
+        ANLAND_RELEASE_REPOSITORY="$ANLAND_RELEASE_REPOSITORY" \
         /usr/local/sbin/install-anland-kde --1 && \
-        echo "--> [enabled] Anland KDE support installed"; \
+        echo "--> [enabled] Anland $DESKTOP support installed"; \
     fi
 
 # 配置 Locale 与 SSH
