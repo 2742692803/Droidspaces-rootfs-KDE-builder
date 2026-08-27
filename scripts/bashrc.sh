@@ -1,51 +1,51 @@
-# Docker stuff
-# List running containers (pretty)
+# Docker 辅助命令
+# 以表格显示正在运行的容器
 alias dps="docker ps --format 'table {{.Names}}\t{{.Image}}\t{{.Status}}\t{{.Ports}}'"
 
-# List all containers
+# 显示全部容器
 alias dpsa="docker ps -a --format 'table {{.Names}}\t{{.Image}}\t{{.Status}}\t{{.Ports}}'"
 
-# List all images
+# 显示全部镜像
 alias dim="docker images --format 'table {{.Repository}}\t{{.Tag}}\t{{.ID}}\t{{.Size}}'"
 
-# Run an image interactively (with auto-remove)
+# 交互运行镜像并在退出后自动删除容器
 alias drun="docker run -it --rm"
 
-# Stop a container by name
+# 按名称停止容器
 alias dstop="docker stop"
 
-# Remove a container by name
+# 按名称删除容器
 alias drm="docker rm"
 
-# Remove an image by name or ID
+# 按名称或 ID 删除镜像
 alias drmi="docker rmi"
 
-# Show logs of a container (follow)
+# 持续显示容器日志
 alias dlog="docker logs -f"
 
-# Quickly remove all stopped containers (human readable)
+# 删除全部已停止的容器
 alias drmc="docker ps -a -q -f status=exited | xargs -r docker rm"
 
-# Quickly remove all dangling images
+# 删除全部悬空镜像
 alias drmid="docker images -f dangling=true -q | xargs -r docker rmi"
 
 check_temps() {
     if [ ! -d /sys/class/thermal ]; then
-        echo "Error: /sys/class/thermal not mounted or unavailable."
+        echo "错误：/sys/class/thermal 未挂载或不可用。"
         return 1
     fi
 
-    echo "==== Thermal Zone Temperatures ===="
+    echo "==== 温度区域 ===="
     for zone in /sys/class/thermal/thermal_zone*; do
-        # Get the type of the thermal zone
+        # 获取温度区域类型
         type_file="$zone/type"
         if [ -f "$type_file" ]; then
             type=$(cat "$type_file")
         else
-            type="unknown"
+            type="未知"
         fi
 
-        # Get the temperature in millidegrees and convert to °C
+        # 读取千分之一摄氏度并转换为摄氏度
         temp_file="$zone/temp"
         if [ -f "$temp_file" ]; then
             temp=$(cat "$temp_file")
@@ -58,25 +58,25 @@ check_temps() {
 }
 
 check_temp_rt() {
-    # Make sure check_temps function exists
+    # 确认 check_temps 函数已经加载
     if ! declare -f check_temps > /dev/null; then
-        echo "Error: check_temps function not found!"
+        echo "错误：找不到 check_temps 函数！"
         return 1
     fi
 
-    echo "Press Ctrl+C to stop the real-time temperature monitor."
+    echo "按 Ctrl+C 停止实时温度监控。"
     while true; do
-        clear                # Clear previous output
-        check_temps          # Call the original check_temps function
-        sleep 1              # Wait 1 second
+        clear                # 清除上一次输出
+        check_temps          # 重新显示温度
+        sleep 1              # 等待 1 秒
     done
 }
 
-# a simple file transfer function via ssh
-# Usage: transfer /path/to/file_or_folder username@ip /path/to/save
+# 通过 SSH 传输文件或目录
+# 用法：transfer /本地/文件或目录 用户名@IP /远程/保存路径
 transfer() {
     if [ $# -ne 3 ]; then
-        echo "Usage: transfer /path/to/file_or_folder username@ip /path/to/save"
+        echo "用法：transfer /本地/文件或目录 用户名@IP /远程/保存路径"
         return 1
     fi
 
@@ -84,17 +84,17 @@ transfer() {
     local DEST="$2"
     local REMOTE_PATH="$3"
 
-    # Check if source exists
+    # 检查源文件或目录是否存在
     if [ ! -e "$SRC" ]; then
-        echo "Error: Source '$SRC' does not exist!"
+        echo "错误：源路径 '$SRC' 不存在！"
         return 1
     fi
 
-    # Perform the transfer recursively (works for files and folders)
+    # 递归传输，兼容文件和目录
     scp -r "$SRC" "$DEST":"$REMOTE_PATH"
     if [ $? -eq 0 ]; then
-        echo "Transfer complete: $SRC -> $DEST:$REMOTE_PATH"
+        echo "传输完成：$SRC -> $DEST:$REMOTE_PATH"
     else
-        echo "Transfer failed!"
+        echo "传输失败！"
     fi
 }

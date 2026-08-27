@@ -7,20 +7,20 @@ autostart="${3:-}"
 username="${4:-}"
 rootfs="${ROOTFS_DIR:-}"
 templates="${START_TEMPLATES_DIR:-/tmp/droidspaces-start}"
-# Droidspaces importers require /etc/droidspaces to remain a regular marker file.
+# Droidspaces 导入器要求 /etc/droidspaces 始终是普通标记文件。
 config="$rootfs/etc/droidspaces-desktop.conf"
 
-[[ "$desktop" =~ ^(none|[a-z][a-z0-9-]*)$ ]] || { echo "Invalid desktop: $desktop" >&2; exit 1; }
-case "$backend" in x11|anland-wayland) ;; *) echo "Invalid display backend: $backend" >&2; exit 1 ;; esac
-case "$autostart" in true|false) ;; *) echo "Invalid desktop autostart value: $autostart" >&2; exit 1 ;; esac
-[[ -n "$username" ]] || { echo "A desktop username is required" >&2; exit 1; }
+[[ "$desktop" =~ ^(none|[a-z][a-z0-9-]*)$ ]] || { echo "无效的桌面：$desktop" >&2; exit 1; }
+case "$backend" in x11|anland-wayland) ;; *) echo "无效的显示后端：$backend" >&2; exit 1 ;; esac
+case "$autostart" in true|false) ;; *) echo "无效的桌面自启动值：$autostart" >&2; exit 1 ;; esac
+[[ -n "$username" ]] || { echo "必须指定桌面用户名" >&2; exit 1; }
 
 if [[ "$desktop" == none && "$backend" != x11 ]]; then
-    echo "Unsupported desktop/backend pair: $desktop/$backend" >&2
+    echo "不支持的桌面与显示后端组合：$desktop/$backend" >&2
     exit 1
 fi
 if [[ "$desktop" == kde-mobile && "$backend" != anland-wayland ]]; then
-    echo "Unsupported desktop/backend pair: $desktop/$backend" >&2
+    echo "不支持的桌面与显示后端组合：$desktop/$backend" >&2
     exit 1
 fi
 
@@ -43,7 +43,7 @@ if [[ -z "$rootfs" ]]; then
 fi
 
 if [[ "$desktop" == none ]]; then
-    [[ "$autostart" == false ]] || { echo "Desktop autostart cannot be enabled for none" >&2; exit 1; }
+    [[ "$autostart" == false ]] || { echo "桌面为 none 时不能启用自动启动" >&2; exit 1; }
     exit 0
 fi
 

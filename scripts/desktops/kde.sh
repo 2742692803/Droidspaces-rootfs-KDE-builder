@@ -34,7 +34,7 @@ install_apt() {
                 polkit-kde-agent-1 libpam-systemd libpam-modules libpam-kwallet5 plasma-session-x11 language-pack-kde-zh-hans language-pack-zh-hans qt6-translations-l10n
             ;;
         *)
-            echo "KDE is not supported on $ID $VERSION_ID" >&2
+            echo "KDE 不支持当前系统：$ID $VERSION_ID" >&2
             return 1
             ;;
     esac
@@ -43,7 +43,7 @@ install_apt() {
 install_fedora() {
     case "$VERSION_ID" in
         43|44) ;;
-        *) echo "KDE is not supported on Fedora $VERSION_ID" >&2; return 1 ;;
+        *) echo "KDE 不支持 Fedora $VERSION_ID" >&2; return 1 ;;
     esac
 
     echo '%_install_langs all' > /etc/rpm/macros.image-language-conf
@@ -69,5 +69,5 @@ case "$ID" in
     debian|ubuntu) install_apt ;;
     fedora) install_fedora ;;
     arch|archarm|archlinux) install_arch ;;
-    *) echo "Unsupported distribution for KDE: $ID" >&2; exit 1 ;;
+    *) echo "KDE 不支持当前发行版：$ID" >&2; exit 1 ;;
 esac

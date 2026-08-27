@@ -1,4 +1,4 @@
-name: Droidspaces RootFS 核心构建 / Reusable Build
+name: Droidspaces RootFS 核心构建
 
 on:
   workflow_call:
@@ -6,7 +6,7 @@ on:
       ui_language:
         required: false
         type: string
-        default: en
+        default: zh
       build_target:
         required: true
         type: string

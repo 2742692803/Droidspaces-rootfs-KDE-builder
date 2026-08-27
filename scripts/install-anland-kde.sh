@@ -1,8 +1,7 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-# The package archives are deliberately kept out of Git. Override the
-# repository when installing packages published by a fork.
+# 软件包归档不会存入 Git；安装 Fork 发布的软件包时可覆盖仓库地址。
 readonly DEFAULT_REPOSITORY="Goldzxcbug/droidspaces-package"
 readonly RELEASE_REPOSITORY="${ANLAND_KDE_RELEASE_REPOSITORY:-$DEFAULT_REPOSITORY}"
 RELEASE_TAG="${ANLAND_KDE_RELEASE_TAG:-}"
@@ -854,8 +853,8 @@ remove_managed_dnf_excludes() {
     local dnf_conf="$1"
     local temporary_conf mesa_stripped_conf transaction_conf
 
-    # Local patched RPMs must bypass both hold blocks. The caller restores
-    # the original configuration immediately after the DNF transaction.
+    # 本地补丁 RPM 必须临时绕过两个锁定块；调用方会在 DNF 事务结束后
+    # 立即恢复原始配置。
     temporary_conf="$(mktemp -t anland-kde-dnf.XXXXXXXX)"
     mesa_stripped_conf="$(mktemp -t anland-kde-dnf.XXXXXXXX)"
     transaction_conf="$(mktemp -t anland-kde-dnf.XXXXXXXX)"

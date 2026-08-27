@@ -9,7 +9,7 @@ if [ "$EUID" -ne 0 ]; then
   exit 1
 fi
 
-echo "[nosnap] stopping snapd services"
+echo "[nosnap] 正在停止 snapd 服务"
 # 某些精简 RootFS 中可能没有 systemctl，因此先检查命令是否存在。
 # stop 终止当前进程，disable 防止 snapd 在下次启动时再次运行。
 if command -v systemctl >/dev/null 2>&1; then
@@ -19,7 +19,7 @@ if command -v systemctl >/dev/null 2>&1; then
   done
 fi
 
-echo "[nosnap] unmounting snap mounts"
+echo "[nosnap] 正在卸载 Snap 挂载点"
 # 删除 snapd 文件前先卸载其 loop/bind 挂载，避免目录仍被占用。
 # sort -r 让较深的子挂载点优先卸载；-l/-f 用于处理容器中的残留挂载。
 if command -v mount >/dev/null 2>&1 && command -v umount >/dev/null 2>&1; then
@@ -28,7 +28,7 @@ if command -v mount >/dev/null 2>&1 && command -v umount >/dev/null 2>&1; then
   done
 fi
 
-echo "[nosnap] purging snapd packages"
+echo "[nosnap] 正在清除 snapd 软件包"
 # 仅处理已经安装的软件包，避免 apt 因找不到可删除目标而中断构建。
 # 同时移除 GNOME Software、Discover 等桌面环境中的 Snap 后端。
 if command -v apt-get >/dev/null 2>&1 && command -v dpkg >/dev/null 2>&1; then
@@ -41,7 +41,7 @@ if command -v apt-get >/dev/null 2>&1 && command -v dpkg >/dev/null 2>&1; then
   apt-get clean >/dev/null 2>&1 || true
 fi
 
-echo "[nosnap] removing snap leftovers"
+echo "[nosnap] 正在清理 Snap 残留"
 # 清理卸载软件包后仍可能保留的挂载目录、缓存、用户数据和 systemd 单元。
 rm -rf \
   /snap \
@@ -54,7 +54,7 @@ rm -rf \
   "$HOME/snap" \
   /home/*/snap
 
-echo "[nosnap] blocking snapd reinstall through apt"
+echo "[nosnap] 正在阻止 APT 重新安装 snapd"
 # 使用负优先级阻止后续依赖解析重新安装 snapd 及桌面集成组件。
 # Ubuntu 的 chromium-browser 是用于拉取 Chromium Snap 的过渡包，也一并屏蔽。
 mkdir -p /etc/apt/preferences.d
@@ -70,11 +70,11 @@ EOF
 
 # 确认 pin 配置成功落盘；缺少它会导致后续 apt 操作重新引入 Snap。
 if [ ! -f /etc/apt/preferences.d/nosnap.pref ]; then
-  echo "[nosnap] failed to write apt pin"
+  echo "[nosnap] 写入 APT 锁定配置失败"
   exit 1
 fi
 
-echo "[nosnap] adding ppa:xtradeb/apps"
+echo "[nosnap] 正在添加 ppa:xtradeb/apps"
 # XtraDeb 提供部分 Ubuntu 软件的传统 deb 包，可替代只提供 Snap/过渡包的来源。
 # 优先使用 UBUNTU_CODENAME，并兼容只提供 VERSION_CODENAME 的系统。
 xtradeb_codename=""
@@ -152,16 +152,16 @@ if [ -n "$xtradeb_codename" ]; then
       # signed-by 将该仓库的信任范围限制在专用密钥文件内。
       echo "deb [signed-by=/etc/apt/keyrings/xtradeb-apps.asc] https://ppa.launchpadcontent.net/xtradeb/apps/ubuntu ${xtradeb_source_codename} main" > /etc/apt/sources.list.d/xtradeb-apps.list
       if [ "$xtradeb_source_codename" != "$xtradeb_codename" ]; then
-        echo "[nosnap] ppa:xtradeb/apps does not publish ${xtradeb_codename}; using ${xtradeb_source_codename}"
+        echo "[nosnap] ppa:xtradeb/apps 未发布 ${xtradeb_codename}，改用 ${xtradeb_source_codename}"
       fi
     else
-      echo "[nosnap] failed to fetch xtradeb signing key, skipped ppa:xtradeb/apps"
+      echo "[nosnap] 获取 XtraDeb 签名密钥失败，跳过 ppa:xtradeb/apps"
     fi
   else
-    echo "[nosnap] ppa:xtradeb/apps does not support ${xtradeb_codename} or network is unavailable, skipped"
+    echo "[nosnap] ppa:xtradeb/apps 不支持 ${xtradeb_codename} 或网络不可用，已跳过"
   fi
 else
-  echo "[nosnap] unable to detect Ubuntu codename, skipped ppa:xtradeb/apps"
+  echo "[nosnap] 无法检测 Ubuntu 代号，跳过 ppa:xtradeb/apps"
 fi
 
-echo "[nosnap] done"
+echo "[nosnap] 处理完成"

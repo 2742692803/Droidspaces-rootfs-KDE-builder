@@ -6,21 +6,21 @@ profile_dir="${DROIDSPACES_DESKTOP_PROFILE_DIR:-/usr/local/lib/droidspaces/deskt
 
 case "$desktop" in
     none)
-        echo "--> Desktop profile: none"
+        echo "--> 桌面配置：none"
         exit 0
         ;;
 esac
 
 if [[ ! "$desktop" =~ ^[a-z][a-z0-9-]*$ ]]; then
-    echo "Unsupported desktop profile: $desktop" >&2
+    echo "不支持的桌面配置：$desktop" >&2
     exit 1
 fi
 
 profile="$profile_dir/$desktop.sh"
 if [[ ! -x "$profile" ]]; then
-    echo "Desktop profile is missing or not executable: $profile" >&2
+    echo "桌面配置脚本不存在或不可执行：$profile" >&2
     exit 1
 fi
 
-echo "--> Installing desktop profile: $desktop"
+echo "--> 正在安装桌面配置：$desktop"
 exec "$profile"

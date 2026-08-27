@@ -36,7 +36,7 @@ install_apt() {
             apt-get purge -y --auto-remove modemmanager || true
             ;;
         *)
-            echo "KDE mobile is not supported on $ID $VERSION_ID" >&2
+            echo "KDE mobile 不支持当前系统：$ID $VERSION_ID" >&2
             return 1
             ;;
     esac
@@ -45,7 +45,7 @@ install_apt() {
 install_fedora() {
     case "$VERSION_ID" in
         43|44) ;;
-        *) echo "KDE mobile is not supported on Fedora $VERSION_ID" >&2; return 1 ;;
+        *) echo "KDE mobile 不支持 Fedora $VERSION_ID" >&2; return 1 ;;
     esac
 
     echo '%_install_langs all' > /etc/rpm/macros.image-language-conf
@@ -80,5 +80,5 @@ case "$ID" in
     debian|ubuntu) install_apt ;;
     fedora) install_fedora ;;
     arch|archarm|archlinux) install_arch ;;
-    *) echo "Unsupported distribution for KDE mobile: $ID" >&2; exit 1 ;;
+    *) echo "KDE mobile 不支持当前发行版：$ID" >&2; exit 1 ;;
 esac

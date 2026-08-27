@@ -1,9 +1,9 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-# Install the ARM64 Mesa build published by mesa-for-android-container.
-# Also install the MediaCodec VA-API driver published by droidspaces-media-decode.
-# The Mesa archive format and package manager are selected from /etc/os-release.
+# 安装 mesa-for-android-container 发布的 ARM64 Mesa 构建。
+# 同时安装 droidspaces-media-decode 发布的 MediaCodec VA-API 驱动。
+# 根据 /etc/os-release 选择 Mesa 归档格式和包管理器。
 readonly MESA_REPOSITORY="lfdevs/mesa-for-android-container"
 readonly MESA_API_URL="https://api.github.com/repos/${MESA_REPOSITORY}/releases/latest"
 readonly MEDIA_DECODE_REPOSITORY="Re-s/droidspaces-media-decode"
@@ -422,8 +422,7 @@ probe_download_source() {
     local -a probe_command
 
     probe_url="$(download_url_for_source "$source")" || return 1
-    # Probe only the first byte because Mesa assets are much larger than the
-    # manifest used by install-anland-kde.sh for the same latency check.
+    # 仅探测第一个字节；Mesa 资产远大于 install-anland-kde.sh 测速使用的清单。
     if command -v curl >/dev/null 2>&1; then
         if latency="$(curl -fsSL --range 0-0 \
             --connect-timeout "$SOURCE_PROBE_TIMEOUT_SECONDS" \
@@ -869,9 +868,9 @@ write_dnf_config_with_managed_block() {
     rewrite_without_managed_block \
         "$input_file" "$stripped_file" "$DNF_MANAGED_BEGIN" "$DNF_MANAGED_END" || return 1
 
-    # DNF binds the yum-compatible exclude alias and excludepkgs to the same
-    # append-list. Keeping different keys avoids duplicate-key replacement by
-    # the INI parser while composing with Anland's excludepkgs rule.
+    # DNF 会把兼容 yum 的 exclude 别名与 excludepkgs 绑定到同一个追加列表。
+    # 使用不同键可以避免 INI 解析器替换重复键，同时兼容 Anland 的
+    # excludepkgs 规则。
     awk -v begin="$DNF_MANAGED_BEGIN" -v end="$DNF_MANAGED_END" \
         -v excludes="$excluded_packages" '
         function contains(value, wanted, normalized, count, tokens, i) {
@@ -1066,8 +1065,8 @@ install_arch_packages() {
     pacman_config="$WORK_DIR/pacman.conf"
     cp -p "$PACMAN_CONFIG" "$pacman_config"
 
-    # The Mesa Release packages are intentionally unsigned. Restrict the
-    # relaxed signature policy to this temporary pacman configuration.
+    # Mesa Release 软件包有意不签名，因此仅在此临时 Pacman 配置中
+    # 放宽签名策略。
     if grep -Eq '^[[:space:]]*#?[[:space:]]*SigLevel[[:space:]]*=' "$pacman_config"; then
         sed -i -E 's/^[[:space:]]*#?[[:space:]]*SigLevel[[:space:]]*=.*/SigLevel = Never/' "$pacman_config"
     elif grep -qE '^\[options\][[:space:]]*$' "$pacman_config"; then

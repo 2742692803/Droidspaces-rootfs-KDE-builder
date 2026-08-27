@@ -2,7 +2,7 @@
 set -euo pipefail
 
 config="${DROIDSPACES_DESKTOP_CONFIG:-/etc/droidspaces-desktop.conf}"
-[[ -r "$config" ]] || { echo "Desktop configuration is missing: $config" >&2; exit 1; }
+[[ -r "$config" ]] || { echo "缺少桌面配置文件：$config" >&2; exit 1; }
 source "$config"
 
 case "${DESKTOP:-}:${DISPLAY_BACKEND:-}" in
@@ -11,7 +11,7 @@ case "${DESKTOP:-}:${DISPLAY_BACKEND:-}" in
     kde:anland-wayland) command_line='exec startplasma-wayland' ;;
     kde-mobile:anland-wayland) command_line='exec startplasmamobile' ;;
     *)
-        echo "Unsupported desktop session: ${DESKTOP:-unset}/${DISPLAY_BACKEND:-unset}" >&2
+        echo "不支持的桌面会话：${DESKTOP:-未设置}/${DISPLAY_BACKEND:-未设置}" >&2
         exit 1
         ;;
 esac

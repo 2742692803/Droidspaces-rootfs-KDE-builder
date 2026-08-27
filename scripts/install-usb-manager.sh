@@ -170,8 +170,8 @@ install_pacman_dependencies() {
         log "检测到 systemd 257 兼容状态；保留 Pacman IgnorePkg，且不显式请求 systemd。" \
             "Detected the systemd 257 compatibility state; preserving Pacman IgnorePkg without explicitly requesting systemd."
     else
-        # A regular Arch installation includes systemd. Keep it explicit for
-        # minimal/non-Droidspaces installations that have not been downgraded.
+        # 普通 Arch 安装自带 systemd；对尚未降级的精简或非 Droidspaces
+        # 环境继续显式声明该依赖。
         packages+=(systemd)
     fi
 
@@ -280,7 +280,7 @@ install_program() {
     install -m 0755 "$SOURCE_DIR/src/usb-passthrough.sh" "$INSTALL_DIR/usb-passthrough.sh"
     install -m 0755 "$SOURCE_DIR/src/usb-storage-passthrough.sh" "$INSTALL_DIR/usb-storage-passthrough.sh"
     
-    # Install bundled icons
+    # 安装自带图标
     if [[ -d "$SOURCE_DIR/icons" ]]; then
         install -d -m 0755 "$INSTALL_DIR/icons"
         install -m 0644 "$SOURCE_DIR/icons/"*.svg "$INSTALL_DIR/icons/"
@@ -289,10 +289,10 @@ install_program() {
         fi
     fi
 
-    # Upstream currently assumes Debian's /usr/sbin path. /usr/bin is shared by
-    # Debian/Ubuntu, Fedora, and Arch (including merged-/usr installations).
-    # Keep upstream's X11 (xcb) backend preference to avoid Wayland compatibility issues.
-    # Note: blkid path is resolved dynamically at runtime (BLKID_CMD), no patch needed.
+    # 上游当前假定使用 Debian 的 /usr/sbin 路径；Debian/Ubuntu、Fedora 和
+    # Arch（包括合并 /usr 的安装）都共用 /usr/bin。
+    # 保留上游对 X11（xcb）后端的偏好，避免 Wayland 兼容问题。
+    # blkid 路径会在运行时通过 BLKID_CMD 动态解析，无需补丁。
     sed -i \
         -e 's|"dolphin", path|"xdg-open", path|g' \
         -e 's|请运行: sudo apt install python3-pyqt5|请安装当前发行版的 PyQt5 软件包|g' \
@@ -324,7 +324,7 @@ exec /usr/bin/bash /usr/share/usb-manager/usb-storage-passthrough.sh "$@"
 EOF
     chmod 0755 /usr/bin/usb-storage-passthrough
 
-    # Use bundled icon if available, otherwise fallback to system theme
+    # 优先使用自带图标，否则回退到系统主题
     local icon_path="${INSTALL_DIR}/icons/usb-manager.svg"
     if [[ ! -f "$icon_path" ]]; then
         icon_path="drive-removable-media-usb"
@@ -333,10 +333,10 @@ EOF
     
     cat > /usr/share/applications/usb-manager.desktop <<EOF
 [Desktop Entry]
-Name=USB Manager
-Name[zh_CN]=USB 管理器
-Comment=Droidspaces USB Device Manager
-Comment[zh_CN]=Droidspaces USB 设备管理器
+Name=USB 管理器
+Name[en]=USB Manager
+Comment=Droidspaces USB 设备管理器
+Comment[en]=Droidspaces USB Device Manager
 Exec=/usr/bin/usb-manager
 Icon=${icon_path}
 Terminal=false
@@ -346,7 +346,7 @@ StartupNotify=false
 EOF
 
     install -d -m 0755 -o "$TARGET_USER" -g "$TARGET_GROUP" "$TARGET_HOME/Desktop"
-    # 若桌面快捷方式已是指向源文件的软链接，先删除再复制，避免 install 报 same file
+    # 若桌面快捷方式已是指向源文件的软链接，先删除再复制，避免 install 报“同一文件”错误
     if [ -L "$TARGET_HOME/Desktop/usb-manager.desktop" ]; then
         rm -f -- "$TARGET_HOME/Desktop/usb-manager.desktop"
     fi
@@ -384,7 +384,7 @@ configure_permissions() {
     fi
 
     cat > "$sudoers_tmp" <<EOF
-# Droidspaces USB Manager: device-node creation and removable-media mounting
+# Droidspaces USB Manager：创建设备节点并挂载可移动介质
 # blkid 同时授权 /usr/bin 与 /usr/sbin 两种布局（不同发行版/版本位置不同）
 Cmnd_Alias DROIDSPACES_USB_MANAGER = /usr/bin/mount *, /usr/bin/umount *, /usr/bin/mknod *, /usr/bin/chmod *, /usr/bin/mkdir -p /dev/bus/usb/*, /usr/bin/blkid *, /usr/sbin/blkid *, /usr/bin/bash ${INSTALL_DIR}/usb-passthrough.sh
 ${TARGET_USER} ALL=(root) NOPASSWD: DROIDSPACES_USB_MANAGER
