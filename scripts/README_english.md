@@ -8,8 +8,8 @@ This directory contains installers used while building the RootFS, maintenance t
 
 | File | Run in | Purpose |
 | --- | --- | --- |
-| `install-desktop.sh`, `desktops/*.sh` | RootFS build environment | Dispatches stable desktop profile slugs and owns per-distribution package sets. |
-| `configure-desktop.sh` | RootFS build environment | Writes desktop/backend configuration and optionally installs the common auto-start service. |
+| `install-desktop.sh`, `desktops/*.sh` | RootFS build environment | Dispatches stable desktop profile slugs and owns package sets and desktop-specific environment variables. |
+| `configure-desktop.sh` | RootFS build environment | Writes desktop/backend configuration, invokes profile environment setup, and optionally installs the common auto-start service. |
 | `start-desktop-session.sh` | Linux container | Starts the selected session from `/etc/droidspaces-desktop.conf`. |
 | `install-mesa.sh` | ARM64 Linux container | Installs the latest Android-container Mesa build and MediaCodec VA-API driver, then locks Mesa packages. |
 | `install-anland-kde.sh` | ARM64 Linux container | Installs Anland patched KWin/Xwayland Release packages and locks them. |
@@ -61,7 +61,7 @@ The lock list is generated only from Mesa packages present in the archive. KWin/
 Desktop names, target capabilities, and backend compatibility live in `lib/desktop-config.sh`. To add a desktop:
 
 1. Register its stable slug in `desktop_normalize`, `desktop_label`, and the support matrix.
-2. Add an executable `desktops/<slug>.sh` that installs packages according to `/etc/os-release`.
+2. Add an executable `desktops/<slug>.sh` whose default action installs packages according to `/etc/os-release` and whose `configure-environment <backend>` action configures desktop-specific environment variables.
 3. Map its session command in `start-desktop-session.sh`; `install-desktop.sh` automatically discovers executable profiles for valid slugs.
 4. Add its display label to the `desktop` choice in both workflow entry files.
 

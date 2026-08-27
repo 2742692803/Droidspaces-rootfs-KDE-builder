@@ -152,15 +152,16 @@ Release 通常包含：
 | KDE + X11 | `desktop-session.service` | `DISPLAY=:5 startplasma-x11` |
 | KDE + Anland Wayland | `desktop-session.service` | `startplasma-wayland` |
 | KDE Mobile + Anland Wayland | `desktop-session.service` | `startplasmamobile` |
-| GNOME + Anland Wayland | `desktop-session.service` | `gnome-session --session=gnome`（由启动器补齐 XDG/DBus 环境） |
+| GNOME + Anland Wayland | `desktop-session.service` | `gnome-session --session=gnome`（构建时将 GNOME 会话变量写入 `/etc/environment`） |
 
 该服务以 UID 1000 用户运行并读取 `/etc/environment`。桌面进程异常退出时会在 2 秒后自动重启；如果 60 秒内启动失败超过 5 次，systemd 会暂时停止重试，防止形成崩溃循环。正常退出不会触发自动重启。
 
 ### X11 模式
 
-X11 模式适用于 `display_backend=x11` 的构建。默认环境变量为：
+KDE 的 X11 模式适用于 `display_backend=x11` 的构建。桌面 profile 写入：
 
 ```text
+XCURSOR_SIZE=48
 DISPLAY=:5
 ```
 
@@ -176,11 +177,11 @@ startplasma-x11
 
 ### Wayland/Anland 模式
 
-Wayland/Anland 模式适用于选择 `display_backend=anland-wayland` 的 Debian 13、Ubuntu 26、Fedora 43/44 和 Arch 构建。默认环境变量包括：
+Wayland/Anland 模式适用于选择 `display_backend=anland-wayland` 的 Debian 13、Ubuntu 26、Fedora 43/44 和 Arch 构建。KDE 和 KDE Mobile profile 写入：
 
 ```text
+XCURSOR_SIZE=48
 WAYLAND_DISPLAY=wayland-0
-DISPLAY=:0
 QT_QPA_PLATFORM=wayland
 ANLAND=1
 ANLAND_SOCKET=/run/display.sock
@@ -199,13 +200,26 @@ startplasma-wayland
 startplasmamobile
 ```
 
-GNOME 构建使用以下命令：
+GNOME profile 写入以下变量：
+
+```text
+XCURSOR_SIZE=48
+XDG_SESSION_TYPE=wayland
+XDG_CURRENT_DESKTOP=GNOME
+XDG_SESSION_DESKTOP=gnome
+GNOME_SHELL_SESSION_MODE=gnome
+WAYLAND_DISPLAY=wayland-anland
+GNOME_WAYLAND_DISPLAY=wayland-anland
+QT_QPA_PLATFORM=wayland
+ANLAND=1
+ANLAND_SOCKET=/run/display.sock
+ANLAND_DRM_DEVICE=/dev/dri/renderD128
+```
+
+对应的手动启动命令为：
 
 ```bash
-XDG_SESSION_TYPE=wayland XDG_CURRENT_DESKTOP=GNOME XDG_SESSION_DESKTOP=gnome \
-GNOME_SHELL_SESSION_MODE=gnome WAYLAND_DISPLAY=wayland-anland \
-GNOME_WAYLAND_DISPLAY=wayland-anland \
-  dbus-run-session -- gnome-session --session=gnome
+gnome-session --session=gnome
 ```
 
 ## Wayland 和 Anland 配置

@@ -1,7 +1,37 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-source /etc/os-release
+source "${ROOTFS_DIR:-}/etc/os-release"
+
+configure_environment() {
+    local backend="${1:-}"
+    local environment_file="${ROOTFS_DIR:-}/etc/environment"
+    local assignment key
+    local -a assignments=(
+        XCURSOR_SIZE=48
+        WAYLAND_DISPLAY=wayland-0
+        QT_QPA_PLATFORM=wayland
+        ANLAND=1
+        ANLAND_SOCKET=/run/display.sock
+        ANLAND_DRM_DEVICE=/dev/dri/renderD128
+    )
+
+    [[ "$backend" == anland-wayland ]] || {
+        echo "KDE mobile 显示后端无效：$backend" >&2
+        return 1
+    }
+    case "$ID" in
+        arch|archarm|archlinux)
+            assignments+=(XWAYLAND_GBM_DEVICE=/dev/dri/renderD128)
+            ;;
+    esac
+
+    touch "$environment_file"
+    for assignment in "${assignments[@]}"; do
+        key="${assignment%%=*}"
+        grep -q "^${key}=" "$environment_file" || printf '%s\n' "$assignment" >> "$environment_file"
+    done
+}
 
 install_apt() {
     sed -i 's|^path-exclude=/usr/share/locale/\*/LC_MESSAGES/\*.mo|#&|' \
@@ -76,9 +106,17 @@ install_arch() {
         gstreamer gst-plugins-base gst-plugins-good sound-theme-freedesktop polkit-kde-agent
 }
 
-case "$ID" in
-    debian|ubuntu) install_apt ;;
-    fedora) install_fedora ;;
-    arch|archarm|archlinux) install_arch ;;
-    *) echo "KDE mobile 不支持当前发行版：$ID" >&2; exit 1 ;;
+install_profile() {
+    case "$ID" in
+        debian|ubuntu) install_apt ;;
+        fedora) install_fedora ;;
+        arch|archarm|archlinux) install_arch ;;
+        *) echo "KDE mobile 不支持当前发行版：$ID" >&2; return 1 ;;
+    esac
+}
+
+case "${1:-install}" in
+    install) install_profile ;;
+    configure-environment) configure_environment "${2:-}" ;;
+    *) echo "KDE mobile profile 操作无效：$1" >&2; exit 1 ;;
 esac

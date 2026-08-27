@@ -7,6 +7,7 @@ autostart="${3:-}"
 username="${4:-}"
 rootfs="${ROOTFS_DIR:-}"
 templates="${START_TEMPLATES_DIR:-/tmp/droidspaces-start}"
+profile_dir="${DROIDSPACES_DESKTOP_PROFILE_DIR:-/usr/local/lib/droidspaces/desktops}"
 # Droidspaces 导入器要求 /etc/droidspaces 始终是普通标记文件。
 config="$rootfs/etc/droidspaces-desktop.conf"
 
@@ -33,6 +34,13 @@ DESKTOP=$desktop
 DISPLAY_BACKEND=$backend
 EOF
 chmod 0644 "$config"
+
+# 桌面专属环境必须在 Dockerfile 完成 /etc/environment 后配置。
+if [[ "$desktop" != none ]]; then
+    profile="$profile_dir/$desktop.sh"
+    [[ -x "$profile" ]] || { echo "桌面配置脚本不存在或不可执行：$profile" >&2; exit 1; }
+    ROOTFS_DIR="$rootfs" "$profile" configure-environment "$backend"
+fi
 
 if [[ "$desktop" == kde ]]; then
     install -d -m 0755 "$rootfs/home/$username/.config"

@@ -1,7 +1,37 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-source /etc/os-release
+source "${ROOTFS_DIR:-}/etc/os-release"
+
+configure_environment() {
+    local backend="${1:-}"
+    local environment_file="${ROOTFS_DIR:-}/etc/environment"
+    local assignment key
+    local -a assignments=(
+        XCURSOR_SIZE=48
+        XDG_SESSION_TYPE=wayland
+        XDG_CURRENT_DESKTOP=GNOME
+        XDG_SESSION_DESKTOP=gnome
+        GNOME_SHELL_SESSION_MODE=gnome
+        WAYLAND_DISPLAY=wayland-anland
+        GNOME_WAYLAND_DISPLAY=wayland-anland
+        QT_QPA_PLATFORM=wayland
+        ANLAND=1
+        ANLAND_SOCKET=/run/display.sock
+        ANLAND_DRM_DEVICE=/dev/dri/renderD128
+    )
+
+    [[ "$backend" == anland-wayland ]] || {
+        echo "GNOME 显示后端无效：$backend" >&2
+        return 1
+    }
+
+    touch "$environment_file"
+    for assignment in "${assignments[@]}"; do
+        key="${assignment%%=*}"
+        grep -q "^${key}=" "$environment_file" || printf '%s\n' "$assignment" >> "$environment_file"
+    done
+}
 
 install_apt() {
     local -a packages=(
@@ -32,7 +62,18 @@ install_apt() {
     apt-get install -y --no-install-recommends "${packages[@]}"
 }
 
-case "$ID" in
-    debian|ubuntu) install_apt ;;
-    *) echo "GNOME 不支持当前发行版：$ID" >&2; exit 1 ;;
+install_profile() {
+    case "$ID" in
+        debian|ubuntu) install_apt ;;
+        *) echo "GNOME 不支持当前发行版：$ID" >&2; return 1 ;;
+    esac
+}
+
+case "${1:-install}" in
+    install) install_profile ;;
+    configure-environment) configure_environment "${2:-}" ;;
+    *)
+        echo "GNOME profile 操作无效：$1" >&2
+        exit 1
+        ;;
 esac

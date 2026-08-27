@@ -119,23 +119,13 @@ RUN if [ "$ENABLE_zh_tz_ARG" = "true" ]; then \
 # 为所有 Fedora RootFS 安装 Droidspaces USB Manager
 RUN /usr/local/sbin/install-droidspaces-usb-manager --user "${USERNAME}"
 
-# 添加环境变量
-RUN cat <<'EOF' > /etc/environment
-XCURSOR_SIZE=48
-EOF
-RUN if [ "$DISPLAY_BACKEND" != "anland-wayland" ]; then \
-        echo "DISPLAY=:5" >> /etc/environment; \
-    else \
-        echo "WAYLAND_DISPLAY=wayland-0" >> /etc/environment; \
-        echo "QT_QPA_PLATFORM=wayland" >> /etc/environment; \
-        echo "ANLAND=1" >> /etc/environment; \
-        echo "ANLAND_SOCKET=/run/display.sock" >> /etc/environment; \
-        echo "ANLAND_DRM_DEVICE=/dev/dri/renderD128" >> /etc/environment; \
-        if [ "$ENABLE_mesa_ARG" = "true" ]; then \
-            echo "MESA_LOADER_DRIVER_OVERRIDE=kgsl" >> /etc/environment; \
-            echo "GALLIUM_DRIVER=kgsl" >> /etc/environment; \
-            echo "FD_FORCE_KGSL=1" >> /etc/environment; \
-        fi; \
+# 初始化环境变量文件；桌面专属变量由对应 profile 管理。
+RUN : > /etc/environment
+
+RUN if [ "$ENABLE_mesa_ARG" = "true" ] && [ "$DISPLAY_BACKEND" = "anland-wayland" ]; then \
+        echo "MESA_LOADER_DRIVER_OVERRIDE=kgsl" >> /etc/environment; \
+        echo "GALLIUM_DRIVER=kgsl" >> /etc/environment; \
+        echo "FD_FORCE_KGSL=1" >> /etc/environment; \
     fi
 
 # 修复骁龙8 Gen 2 设备在 Wayland 下的花屏问题

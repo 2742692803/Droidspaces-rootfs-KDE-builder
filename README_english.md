@@ -151,15 +151,16 @@ When `desktop_autostart` is enabled, the build installs `desktop-session.service
 | KDE + X11 | `desktop-session.service` | `DISPLAY=:5 startplasma-x11` |
 | KDE + Anland Wayland | `desktop-session.service` | `startplasma-wayland` |
 | KDE Mobile + Anland Wayland | `desktop-session.service` | `startplasmamobile` |
-| GNOME + Anland Wayland | `desktop-session.service` | `gnome-session --session=gnome` (the launcher supplies XDG/DBus state) |
+| GNOME + Anland Wayland | `desktop-session.service` | `gnome-session --session=gnome` (the build writes the GNOME session variables to `/etc/environment`) |
 
 This service runs as UID 1000 and loads `/etc/environment`. If the desktop process fails, systemd restarts it after 2 seconds. If it fails more than 5 times within 60 seconds, systemd temporarily stops retrying to prevent a crash loop. A normal exit does not trigger a restart.
 
 ### X11 Mode
 
-X11 mode applies to builds with `display_backend=x11`. The default display environment is:
+KDE X11 mode applies to builds with `display_backend=x11`. Its desktop profile writes:
 
 ```text
+XCURSOR_SIZE=48
 DISPLAY=:5
 ```
 
@@ -175,11 +176,11 @@ The actual auto-start behavior still depends on Droidspaces systemd support, per
 
 ### Wayland/Anland Mode
 
-Wayland/Anland mode applies to Debian 13, Ubuntu 26, Fedora 43/44, and Arch builds with `display_backend=anland-wayland`. The default environment includes:
+Wayland/Anland mode applies to Debian 13, Ubuntu 26, Fedora 43/44, and Arch builds with `display_backend=anland-wayland`. The KDE and KDE Mobile profiles write:
 
 ```text
+XCURSOR_SIZE=48
 WAYLAND_DISPLAY=wayland-0
-DISPLAY=:0
 QT_QPA_PLATFORM=wayland
 ANLAND=1
 ANLAND_SOCKET=/run/display.sock
@@ -198,13 +199,26 @@ For a `KDE mobile` build, the corresponding manual start command is:
 startplasmamobile
 ```
 
-For a GNOME build, use:
+The GNOME profile writes:
+
+```text
+XCURSOR_SIZE=48
+XDG_SESSION_TYPE=wayland
+XDG_CURRENT_DESKTOP=GNOME
+XDG_SESSION_DESKTOP=gnome
+GNOME_SHELL_SESSION_MODE=gnome
+WAYLAND_DISPLAY=wayland-anland
+GNOME_WAYLAND_DISPLAY=wayland-anland
+QT_QPA_PLATFORM=wayland
+ANLAND=1
+ANLAND_SOCKET=/run/display.sock
+ANLAND_DRM_DEVICE=/dev/dri/renderD128
+```
+
+The corresponding manual start command is:
 
 ```bash
-XDG_SESSION_TYPE=wayland XDG_CURRENT_DESKTOP=GNOME XDG_SESSION_DESKTOP=gnome \
-GNOME_SHELL_SESSION_MODE=gnome WAYLAND_DISPLAY=wayland-anland \
-GNOME_WAYLAND_DISPLAY=wayland-anland \
-  dbus-run-session -- gnome-session --session=gnome
+gnome-session --session=gnome
 ```
 
 ## Wayland and Anland Setup

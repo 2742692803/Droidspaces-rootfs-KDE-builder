@@ -8,8 +8,8 @@
 
 | 文件 | 运行位置 | 作用 |
 | --- | --- | --- |
-| `install-desktop.sh`、`desktops/*.sh` | RootFS 构建环境 | 按稳定 slug 分发桌面 profile，并维护各发行版的软件包集合。 |
-| `configure-desktop.sh` | RootFS 构建环境 | 写入桌面/显示后端配置并按需安装统一自启动服务。 |
+| `install-desktop.sh`、`desktops/*.sh` | RootFS 构建环境 | 按稳定 slug 分发桌面 profile，并维护软件包集合和桌面专属环境变量。 |
+| `configure-desktop.sh` | RootFS 构建环境 | 写入桌面/显示后端配置，调用 profile 环境配置并按需安装统一自启动服务。 |
 | `start-desktop-session.sh` | Linux 容器 | 根据 `/etc/droidspaces-desktop.conf` 启动实际桌面会话。 |
 | `install-mesa.sh` | ARM64 Linux 容器 | 安装最新版 Android 容器专用 Mesa 和 MediaCodec VA-API 驱动，并锁定 Mesa 包。 |
 | `install-anland-kde.sh` | ARM64 Linux 容器 | 安装 Anland patched KWin/Xwayland Release 包，并锁定相关包。 |
@@ -61,7 +61,7 @@ sudo ./scripts/install-mesa.sh --3  # ghproxy.net
 桌面名称、发行版能力和显示后端矩阵集中在 `lib/desktop-config.sh`。新增桌面时：
 
 1. 在 `desktop_normalize`、`desktop_label` 和支持矩阵中登记稳定 slug。
-2. 新建可执行的 `desktops/<slug>.sh`，在其中按 `/etc/os-release` 安装各发行版软件包。
+2. 新建可执行的 `desktops/<slug>.sh`，默认操作按 `/etc/os-release` 安装软件包，并实现 `configure-environment <backend>` 配置桌面专属环境变量。
 3. 在 `start-desktop-session.sh` 添加会话命令；`install-desktop.sh` 会自动发现合法 slug 对应的可执行 profile。
 4. 在中英文工作流入口的 `desktop` 下拉中加入显示名称。
 

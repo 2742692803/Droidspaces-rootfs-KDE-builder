@@ -120,13 +120,8 @@ RUN for pam_file in /etc/pam.d/su /etc/pam.d/su-l; do \
     grep -qE '^[[:space:]]*session[[:space:]].*pam_env\.so' /etc/pam.d/su-l || \
         echo 'session        required        pam_env.so' >> /etc/pam.d/su-l
 
-# 添加环境变量
-RUN cat <<'EOF' > /etc/environment
-XCURSOR_SIZE=48
-EOF
-RUN if [ "$DISPLAY_BACKEND" != "anland-wayland" ]; then \
-        echo 'DISPLAY=:5' >> /etc/environment; \
-    fi
+# 初始化环境变量文件；桌面专属变量由对应 profile 管理。
+RUN : > /etc/environment
 # 音频选择
 RUN if [ "$PulseAudio" = "socket" ]; then \
         echo "PULSE_SERVER=unix:/tmp/.pulse-socket" >> /etc/environment; \
@@ -134,18 +129,10 @@ RUN if [ "$PulseAudio" = "socket" ]; then \
         echo "PULSE_SERVER=tcp:127.0.0.1:4713" >> /etc/environment; \
     fi
 
-RUN if [ "$DISPLAY_BACKEND" = "anland-wayland" ]; then \
-        echo 'WAYLAND_DISPLAY=wayland-0' >> /etc/environment; \
-        echo 'QT_QPA_PLATFORM=wayland' >> /etc/environment; \
-        echo 'ANLAND=1' >> /etc/environment; \
-        echo 'ANLAND_SOCKET=/run/display.sock' >> /etc/environment; \
-        echo 'ANLAND_DRM_DEVICE=/dev/dri/renderD128' >> /etc/environment; \
-        echo 'XWAYLAND_GBM_DEVICE=/dev/dri/renderD128' >> /etc/environment; \
-        if [ "$ENABLE_mesa_ARG" = "true" ]; then \
-            echo 'MESA_LOADER_DRIVER_OVERRIDE=kgsl' >> /etc/environment; \
-            echo 'GALLIUM_DRIVER=kgsl' >> /etc/environment; \
-            echo 'FD_FORCE_KGSL=1' >> /etc/environment; \
-        fi; \
+RUN if [ "$ENABLE_mesa_ARG" = "true" ] && [ "$DISPLAY_BACKEND" = "anland-wayland" ]; then \
+        echo 'MESA_LOADER_DRIVER_OVERRIDE=kgsl' >> /etc/environment; \
+        echo 'GALLIUM_DRIVER=kgsl' >> /etc/environment; \
+        echo 'FD_FORCE_KGSL=1' >> /etc/environment; \
     fi
 
 RUN if [ "$ENABLE_8gen2_wayland_ARG" = "true" ]; then \

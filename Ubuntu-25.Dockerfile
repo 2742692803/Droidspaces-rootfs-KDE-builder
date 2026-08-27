@@ -137,11 +137,8 @@ RUN sed -i '/en_US.UTF-8/s/^# //' /etc/locale.gen && \
 RUN /usr/local/sbin/install-droidspaces-usb-manager --user "${USERNAME}"
 
 
-# 添加环境变量
-RUN cat <<'EOF' > /etc/environment
-XCURSOR_SIZE=48
-DISPLAY=:5
-EOF
+# 初始化环境变量文件；桌面专属变量由对应 profile 管理。
+RUN : > /etc/environment
 # 音频选择
 RUN if [ "$PulseAudio" = "socket" ]; then \
         echo "PULSE_SERVER=unix:/tmp/.pulse-socket" >> /etc/environment; \
