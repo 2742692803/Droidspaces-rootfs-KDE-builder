@@ -697,7 +697,7 @@ install_selected_packages() {
         -o Dpkg::Options::=--force-confold \
         -o Dpkg::Options::=--force-remove-essential \
         install -y --no-install-recommends --allow-downgrades \
-        --allow-change-held-packages --auto-remove --remove-essential "${SELECTED_FILES[@]}"
+        --allow-change-held-packages --auto-remove "${SELECTED_FILES[@]}"
       apt-get check
       ;;
     dnf)
