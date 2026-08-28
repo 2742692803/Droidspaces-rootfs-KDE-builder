@@ -8,9 +8,10 @@ export DEBIAN_FRONTEND=noninteractive
 readonly SYSTEMD257_TARGET_MAJOR=257
 readonly SYSTEMD257_STATE="/etc/droidspaces-systemd257"
 readonly DEFAULT_RELEASE_REPOSITORY="Goldzxcbug/droidspaces-package"
-# 此兼容标签已经冻结；更新时必须同步修改全部固定元数据。
+# 这是滚动兼容 Release。每次安装都会从 GitHub Release API 读取目标资产的
+# 官方 SHA-256，再校验实际下载的归档，避免包更新后需要同步修改本脚本。
 readonly DEFAULT_RELEASE_TAG="systemd257-packages"
-readonly PACKAGE_REPOSITORY_COMMIT="0c7d16a3d63143cfa6a8a95e7ad502bb3e39200b"
+readonly GITHUB_API_URL="https://api.github.com"
 readonly MAX_ARCHIVE_BYTES=$((128 * 1024 * 1024))
 
 RELEASE_REPOSITORY="${SYSTEMD257_RELEASE_REPOSITORY:-$DEFAULT_RELEASE_REPOSITORY}"
@@ -20,12 +21,12 @@ PACKAGE_DIR=""
 PACKAGE_MANAGER=""
 TARGET=""
 ARCHIVE_NAME=""
-PINNED_ARCHIVE_SHA256=""
 EXPECTED_ARCHIVE_SHA256=""
-EXPECTED_PACKAGE_COUNT=0
+ARCHIVE_CHECKSUM_SOURCE=""
 CURRENT_VERSION_LINE=""
 SOURCE_VERSION=""
 PACKAGING_SOURCE=""
+OFFICIAL_RELEASE_METADATA=""
 
 declare -a MANIFEST_FILES=()
 declare -a PACKAGE_NAMES=()
@@ -182,37 +183,27 @@ detect_target() {
   TARGET=""
   PACKAGE_MANAGER=""
   ARCHIVE_NAME=""
-  PINNED_ARCHIVE_SHA256=""
-  EXPECTED_PACKAGE_COUNT=0
 
   case "$distro_id:$version_id" in
     ubuntu:26.04*)
       TARGET="ubuntu2604"
       PACKAGE_MANAGER="apt"
       ARCHIVE_NAME="systemd257-ubuntu2604-arm64.tar.gz"
-      PINNED_ARCHIVE_SHA256="57dc7c16da6260e53b271e345203c87a14eea85d90eabba95e3489ce8d9b7352"
-      EXPECTED_PACKAGE_COUNT=33
       ;;
     fedora:43*)
       TARGET="fedora43"
       PACKAGE_MANAGER="dnf"
       ARCHIVE_NAME="systemd257-fedora43-arm64.tar.gz"
-      PINNED_ARCHIVE_SHA256="536890362e8bc3bc48a20214f600b5cc8e6ce81e69f1433fcf2331c4d6d76479"
-      EXPECTED_PACKAGE_COUNT=21
       ;;
     fedora:44*)
       TARGET="fedora44"
       PACKAGE_MANAGER="dnf"
       ARCHIVE_NAME="systemd257-fedora44-arm64.tar.gz"
-      PINNED_ARCHIVE_SHA256="252373294abe2090b5d681e4dbb21ddef44e16b09ae967de79fe1b74a282692e"
-      EXPECTED_PACKAGE_COUNT=21
       ;;
     arch:|archarm:|archlinux:)
       TARGET="arch"
       PACKAGE_MANAGER="pacman"
       ARCHIVE_NAME="systemd257-arch-arm64.tar.gz"
-      PINNED_ARCHIVE_SHA256="86ebb6555747eaa19f6e1556e527ccd190e5684a885d3546ee401692f045d4ee"
-      EXPECTED_PACKAGE_COUNT=6
       ;;
     *)
       return 1
@@ -224,6 +215,9 @@ verify_target_tools_and_architecture() {
   local architecture
 
   command -v curl >/dev/null 2>&1 || die "缺少 curl，无法下载预构建包族"
+  if [[ -z "${SYSTEMD257_ARCHIVE_SHA256:-}" ]]; then
+    command -v jq >/dev/null 2>&1 || die "缺少 jq，无法读取 GitHub Release 校验值"
+  fi
   command -v tar >/dev/null 2>&1 || die "缺少 tar，无法解压预构建包族"
   command -v sha256sum >/dev/null 2>&1 || die "缺少 sha256sum，无法验证预构建包族"
 
@@ -251,22 +245,55 @@ verify_target_tools_and_architecture() {
   esac
 }
 
+fetch_official_release_metadata() {
+  local api_url
+
+  api_url="${GITHUB_API_URL}/repos/${RELEASE_REPOSITORY}/releases/tags/${RELEASE_TAG}"
+  if ! OFFICIAL_RELEASE_METADATA="$(curl --proto '=https' --tlsv1.2 -fsSL \
+    --retry 5 --retry-all-errors --connect-timeout 30 "$api_url")"; then
+    die "无法读取 GitHub Release 元数据：${RELEASE_REPOSITORY}@${RELEASE_TAG}"
+  fi
+}
+
+release_asset_sha256() {
+  local digest
+
+  if ! digest="$(jq -er --arg name "$ARCHIVE_NAME" --arg tag "$RELEASE_TAG" '
+    if .tag_name != $tag then
+      error("release tag mismatch")
+    elif (.draft // false) or (.prerelease // false) then
+      error("release is not a stable release")
+    else
+      [.assets[]? | select((.name // "") == $name) | .digest]
+      | if length == 1 then .[0] else error("asset digest is not unique") end
+    end
+  ' <<< "$OFFICIAL_RELEASE_METADATA" 2>/dev/null)"; then
+    die "GitHub Release 未提供 ${ARCHIVE_NAME} 的唯一 SHA-256 校验值"
+  fi
+  [[ "$digest" =~ ^sha256:([0-9A-Fa-f]{64})$ ]] ||
+    die "GitHub Release 为 ${ARCHIVE_NAME} 返回了无效的 SHA-256 校验值"
+
+  printf '%s\n' "${BASH_REMATCH[1],,}"
+}
+
 resolve_archive_checksum() {
   [[ "$RELEASE_REPOSITORY" =~ ^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$ ]] ||
     die "SYSTEMD257_RELEASE_REPOSITORY 不是有效的 GitHub owner/repository：$RELEASE_REPOSITORY"
   [[ "$RELEASE_TAG" =~ ^[A-Za-z0-9._+-]+$ ]] ||
     die "SYSTEMD257_RELEASE_TAG 包含不支持的字符：$RELEASE_TAG"
 
-  if [[ "$RELEASE_REPOSITORY" != "$DEFAULT_RELEASE_REPOSITORY" ||
-        "$RELEASE_TAG" != "$DEFAULT_RELEASE_TAG" ]]; then
-    [[ -n "${SYSTEMD257_ARCHIVE_SHA256:-}" ]] ||
-      die "覆盖 Release 仓库或标签时必须同时设置 SYSTEMD257_ARCHIVE_SHA256"
+  if [[ -n "${SYSTEMD257_ARCHIVE_SHA256:-}" ]]; then
+    EXPECTED_ARCHIVE_SHA256="$SYSTEMD257_ARCHIVE_SHA256"
+    ARCHIVE_CHECKSUM_SOURCE="SYSTEMD257_ARCHIVE_SHA256"
+  else
+    fetch_official_release_metadata
+    EXPECTED_ARCHIVE_SHA256="$(release_asset_sha256)"
+    ARCHIVE_CHECKSUM_SOURCE="github-release-api"
   fi
-
-  EXPECTED_ARCHIVE_SHA256="${SYSTEMD257_ARCHIVE_SHA256:-$PINNED_ARCHIVE_SHA256}"
   [[ "$EXPECTED_ARCHIVE_SHA256" =~ ^[0-9a-fA-F]{64}$ ]] ||
     die "SYSTEMD257_ARCHIVE_SHA256 不是有效的 SHA-256"
   EXPECTED_ARCHIVE_SHA256="${EXPECTED_ARCHIVE_SHA256,,}"
+  log "已从 ${ARCHIVE_CHECKSUM_SOURCE} 获取 ${ARCHIVE_NAME} 的 SHA-256"
 }
 
 download_archive() {
@@ -381,9 +408,6 @@ verify_manifest() {
   [[ "$compat_patch" == 0001-droidspaces-old-kernel-compat.patch ]] ||
     die "归档未声明 Droidspaces 旧内核兼容补丁"
   [[ "$package_count" =~ ^[1-9][0-9]*$ ]] || die "manifest 包数量无效：$package_count"
-  (( package_count == EXPECTED_PACKAGE_COUNT )) ||
-    die "归档不是预期的完整包族：需要 $EXPECTED_PACKAGE_COUNT 个包，得到 $package_count"
-
   mapfile -t MANIFEST_FILES < <(sed -n 's/^package=//p' "$PACKAGE_DIR/manifest.env")
   (( ${#MANIFEST_FILES[@]} == package_count )) ||
     die "manifest package_count 与 package 条目数量不一致"
@@ -847,7 +871,7 @@ release_repository=$RELEASE_REPOSITORY
 release_tag=$RELEASE_TAG
 release_asset=$ARCHIVE_NAME
 archive_sha256=$EXPECTED_ARCHIVE_SHA256
-package_repository_commit=$PACKAGE_REPOSITORY_COMMIT
+archive_checksum_source=$ARCHIVE_CHECKSUM_SOURCE
 packaging_source=$PACKAGING_SOURCE
 managed_packages=$managed_packages_csv
 EOF
