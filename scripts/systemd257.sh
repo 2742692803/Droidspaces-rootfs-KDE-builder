@@ -791,26 +791,150 @@ configure_apt_holds() {
   fi
 }
 
+write_dnf_config_with_systemd_hold() {
+  local input_file="$1"
+  local output_file="$2"
+
+  # 不能使用 sed 的 0,/pattern/ 范围替换：该范围会命中 [main] 和其间的每一行，
+  # 从而把 systemd* 拼到段头后面。这里先完整读取配置，只在 [main] 段写入锁定项。
+  awk '
+    function option_name(line) {
+      if (line ~ /^[[:space:]]*exclude[[:space:]]*=/) {
+        return "exclude"
+      }
+      if (line ~ /^[[:space:]]*excludepkgs[[:space:]]*=/) {
+        return "excludepkgs"
+      }
+      return ""
+    }
+    function has_systemd_pattern(line, equals, value, normalized, count, tokens, i) {
+      equals = index(line, "=")
+      value = substr(line, equals + 1)
+      normalized = value
+      gsub(/,/, " ", normalized)
+      count = split(normalized, tokens, /[[:space:]]+/)
+      for (i = 1; i <= count; i++) {
+        if (tokens[i] == "systemd*") {
+          return 1
+        }
+      }
+      return 0
+    }
+    function append_systemd_pattern(line, equals, value, trimmed, separator) {
+      equals = index(line, "=")
+      value = substr(line, equals + 1)
+      trimmed = value
+      sub(/[[:space:]]+$/, "", trimmed)
+      separator = (trimmed == "" || trimmed ~ /,$/) ? "" : ","
+      return substr(line, 1, equals) value separator "systemd*"
+    }
+    {
+      lines[++line_count] = $0
+    }
+    END {
+      in_main = 0
+      for (i = 1; i <= line_count; i++) {
+        line = lines[i]
+        if (line ~ /^[[:space:]]*\[main\][[:space:]]*$/) {
+          in_main = 1
+          saw_main = 1
+          continue
+        }
+        if (line ~ /^[[:space:]]*\[[^]]+\][[:space:]]*$/) {
+          in_main = 0
+          continue
+        }
+        if (!in_main) {
+          continue
+        }
+        option = option_name(line)
+        if (option == "") {
+          continue
+        }
+        if (option == "exclude") {
+          saw_exclude = 1
+        } else {
+          saw_excludepkgs = 1
+        }
+        if (has_systemd_pattern(line)) {
+          has_systemd = 1
+        }
+      }
+
+      # DNF 将 exclude 与 excludepkgs 视为同一追加列表。像 Anland/Mesa 一样，
+      # 若另一种键已存在则使用不同的键，避免写入重复键或改动别的托管块。
+      if (saw_exclude && !saw_excludepkgs) {
+        target_option = "excludepkgs"
+      } else if (!saw_exclude && saw_excludepkgs) {
+        target_option = "exclude"
+      } else {
+        target_option = "exclude"
+      }
+      update_existing = saw_exclude && saw_excludepkgs
+
+      in_main = 0
+      for (i = 1; i <= line_count; i++) {
+        line = lines[i]
+        if (line ~ /^[[:space:]]*\[main\][[:space:]]*$/) {
+          if (in_main && !has_systemd && !wrote_hold) {
+            print target_option "=systemd*"
+            wrote_hold = 1
+          }
+          in_main = 1
+          print line
+          continue
+        }
+        if (line ~ /^[[:space:]]*\[[^]]+\][[:space:]]*$/) {
+          if (in_main && !has_systemd && !wrote_hold) {
+            print target_option "=systemd*"
+            wrote_hold = 1
+          }
+          in_main = 0
+          print line
+          continue
+        }
+        if (in_main && !has_systemd && update_existing && !wrote_hold &&
+            option_name(line) == target_option) {
+          print append_systemd_pattern(line)
+          wrote_hold = 1
+          continue
+        }
+        print line
+      }
+
+      if (in_main && !has_systemd && !wrote_hold) {
+        print target_option "=systemd*"
+        wrote_hold = 1
+      }
+      if (!saw_main && !has_systemd) {
+        print "[main]"
+        print "exclude=systemd*"
+      }
+    }
+  ' "$input_file" > "$output_file"
+}
+
 configure_dnf_holds() {
   local dnf_config="/etc/dnf/dnf.conf"
-  local current_excludes
+  local temporary_config="$WORK_DIR/dnf.conf.systemd257"
+  local backup_config="$WORK_DIR/dnf.conf.systemd257.backup"
 
-  touch "$dnf_config"
-  if grep -q '^exclude=' "$dnf_config"; then
-    current_excludes="$(sed -n 's/^exclude=//p' "$dnf_config" | head -n1)"
-    case " $current_excludes " in
-      *' systemd* '*) ;;
-      *) sed -i '0,/^exclude=/{s/$/ systemd*/;}' "$dnf_config" ;;
-    esac
-  elif grep -q '^excludepkgs=' "$dnf_config"; then
-    current_excludes="$(sed -n 's/^excludepkgs=//p' "$dnf_config" | head -n1)"
-    case " $current_excludes " in
-      *' systemd* '*) ;;
-      *) sed -i '0,/^excludepkgs=/{s/$/ systemd*/;}' "$dnf_config" ;;
-    esac
-  else
-    printf '\n# systemd257: keep the package-family compatibility runtime\nexclude=systemd*\n' \
-      >> "$dnf_config"
+  install -d -m 0755 "$(dirname "$dnf_config")"
+  if [[ ! -e "$dnf_config" ]]; then
+    install -m 0644 /dev/null "$dnf_config"
+  fi
+  [[ -f "$dnf_config" ]] || die "DNF 配置不是普通文件：$dnf_config"
+
+  if ! write_dnf_config_with_systemd_hold "$dnf_config" "$temporary_config"; then
+    die "无法生成 DNF 的 systemd 257 锁定配置"
+  fi
+  cp -p "$dnf_config" "$backup_config"
+  install -m 0644 "$temporary_config" "$dnf_config"
+  # 立即让 DNF 解析最终配置；避免配置损坏在 Dockerfile 的后续层才暴露。
+  if ! dnf check; then
+    install -m 0644 "$backup_config" "$dnf_config" ||
+      die "DNF 锁定配置校验失败，且无法恢复原配置：$dnf_config"
+    die "DNF 拒绝 systemd 257 锁定配置，已恢复原配置"
   fi
 }
 
